@@ -1,11 +1,10 @@
 import { Icon } from './Icon';
-import { formatChallengeDate, isDayUnlocked, isDayUnlockedByDate, promptFor } from '../lib/challenge';
-import type { Participant } from '../data/participants';
+import { formatChallengeDate } from '../lib/challenge';
 
-interface Props { selectedDay: number; onSelectDay: (day: number) => void; participant: Participant; completedDays: number[] }
+interface Props { selectedDay: number; onSelectDay: (day: number) => void; completedDays: number[]; activeDay: number | null; availableDays: number[] }
 const weekdays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
-export function Calendar({ selectedDay, onSelectDay, participant, completedDays }: Props) {
+export function Calendar({ selectedDay, onSelectDay, completedDays, activeDay, availableDays }: Props) {
   return <section className="glass-panel calendar-panel" aria-labelledby="calendar-title">
     <div className="section-heading"><div><span className="eyebrow">THE CHALLENGE</span><h2 id="calendar-title">December <span>2026</span></h2></div><span className="calendar-icon"><Icon name="calendar" /></span></div>
     <p className="panel-copy">A new prompt unlocks every day at 6:00 am.</p>
@@ -13,12 +12,12 @@ export function Calendar({ selectedDay, onSelectDay, participant, completedDays 
     <div className="calendar-grid" role="group" aria-label="December 2026 challenge days">
       {Array.from({ length: 31 }, (_, index) => {
         const day = index + 1;
-        const unlocked = isDayUnlocked(day);
         const completed = completedDays.includes(day);
-        const visuallyLocked = !import.meta.env.DEV && !isDayUnlockedByDate(day) && !completed;
+        const available = availableDays.includes(day);
+        const visuallyLocked = !available;
         const selected = selectedDay === day;
-        const title = unlocked ? `${formatChallengeDate(day)}: ${promptFor(day, participant.id).title}${completed ? ', drawing uploaded' : ''}${visuallyLocked ? ', locked appearance but available for testing' : ''}` : `${formatChallengeDate(day)}, locked until 6 am`;
-        return <button key={day} className={`day-cell ${visuallyLocked ? 'day-cell--locked' : 'day-cell--open'} ${completed ? 'day-cell--complete' : ''} ${selected ? 'is-current' : ''}`} onClick={() => unlocked && onSelectDay(day)} disabled={!unlocked} aria-label={title} aria-pressed={selected}>
+        const title = completed ? `${formatChallengeDate(day)}, drawing complete` : day === activeDay ? `${formatChallengeDate(day)}, current prompt` : `${formatChallengeDate(day)}, locked`;
+        return <button key={day} className={`day-cell ${visuallyLocked ? 'day-cell--locked' : 'day-cell--open'} ${completed ? 'day-cell--complete' : ''} ${selected ? 'is-current' : ''}`} onClick={() => available && onSelectDay(day)} disabled={!available} aria-label={title} aria-pressed={selected}>
           {completed ? <Icon name="check" /> : <span>{day}</span>}
         </button>;
       })}

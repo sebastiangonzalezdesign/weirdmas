@@ -1,17 +1,17 @@
 # Weirdmas
 
-A December illustration challenge for Lu, Sebastian, and future participants. This repository starts with the responsive React shell, reusable interface components, prompt content, and installable PWA setup. The browser build is a front-end prototype; it does not sync accounts, prompts, or drawings across devices yet.
+A December 2026 illustration challenge for Lu, Sebastian, and future participants. The React + TypeScript + Vite PWA uses Supabase email OTP authentication, Postgres for participant assignments and drawing metadata, and a private Storage bucket for uploaded artwork.
 
 ## Run locally
 
-Requirements: Node.js 20.19+ or 22.12+, and npm.
+Requirements: Node.js 22+, and npm.
 
 ```sh
 npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The production checks are:
+Create a local `.env.local` from `.env.example` and add the Supabase project URL and publishable key. Never use a service-role key in the browser or a `VITE_` variable. Open the local URL printed by Vite. The production checks are:
 
 ```sh
 npm run lint
@@ -39,30 +39,55 @@ The active preview assets are `public/assets/avatars/Lu.svg`, `public/assets/ava
 
 `public/assets/brand/weirdmas-mark.svg` is a simple install icon, not final character art.
 
+## Supabase setup
+
+1. In the Supabase project, open **SQL Editor**, run the migration in `supabase/migrations/20260601000000_weirdmas_challenge.sql`, and confirm it completes.
+2. Generate one private, one-time profile code per participant in the SQL Editor:
+
+   ```sql
+   select public.issue_participant_claim_code('lu');
+   select public.issue_participant_claim_code('sebastian');
+   ```
+
+   Each query returns a random code once. Share each code privately with its participant; do not put the codes in the app, source control, or chat. A code can be claimed only once. If an unused code needs to be replaced, run its query again; a claimed profile cannot be re-issued through this function.
+3. Each participant selects their profile, enters their own email, verifies the emailed OTP, then enters their one-time profile code. The verified email account is permanently bound to that profile. Email addresses do not need to be added to Supabase in advance. Future sign-ins need only the email OTP.
+4. Copy `.env.example` to `.env.local`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from the Supabase project's API settings. The publishable/anon key is intended for the browser; never expose a service-role or secret key.
+5. Add those same two values to the Vercel project's Environment Variables for the environments you deploy, then redeploy. The app displays an explicit configuration error if these values are missing.
+6. Supabase Auth must allow the deployed app's URL. The email OTP template should contain `{{ .Token }}`; SMTP delivery can use the configured Resend sender.
+
+The migration seeds Lu, Sebastian, all 31 prompts, and deterministic assignments. A unique database constraint guarantees different prompts for participants on each day. It also creates the private `weirdmas-drawings` bucket, row-level security policies, and server-side eligibility checks. The challenge unlock time is 6:00 am in `America/Bogota`; each participant must complete their earliest due day before a later incomplete day opens. Missed days do not expire. A participant can replace their own drawing for a completed day until the shared reveal.
+
+Each participant can read only their own drawings and revealed prompts until both active participants have all 31 drawings. An organizer can manually release histories from the Supabase SQL Editor if needed:
+
+```sql
+update public.challenge_settings
+set force_shared_reveal = true
+where singleton = true;
+```
+
+Uploaded images are limited to PNG, JPEG, WebP, or GIF, up to 10 MB. The bucket remains private; the app requests temporary signed URLs. The app does not currently queue uploads offline.
+
+Vercel deployments connected to GitHub run when the configured branch is pushed. The PWA is configured to update automatically when a new production build is available. The Supabase migration and one-time profile codes still need to be applied/configured in the project before participants can sign in.
+
 ## Structure
 
 ```text
 src/
   components/       Reusable calendar, mobile navigation, participant picker, prompt, gallery, sketchbook page, and icon
-  data/             Participant configuration and the 31 prompt records
-  lib/               Challenge date, unlock, and local assignment rules
+  data/             Local participant display fallback and the 31 prompt records
+  lib/               Challenge date formatting and Supabase client/services
   App.tsx            Onboarding, dashboard, and sketchbook-page composition
   styles.css         Design tokens, glass surface, responsive layouts, component styles
+supabase/migrations/ Database schema, assignments, storage bucket, and row-level security
 public/assets/       PWA icon and reserved artwork upload slots
 ```
 
-The initial participant list contains Lu and Sebastian. The picker reads an array, not a two-person conditional. For a given date, prompt assignment is deterministic in this local prototype and distinct between participants while there are enough prompts. The calendar is for December 2026 and each date unlocks at 6:00 am in the device's local timezone. In Vite development mode every day appears available and is clickable for testing; days with uploaded drawings retain their **Created** state. Production builds show future days as locked and enforce the date gate. On narrow screens, a floating glass navigation switches among Today (prompt and upload), Calendar, and Sketchbook; choosing a calendar day returns to Today. Drawings uploaded in the current browser session appear in the sketchbook and mark that profile/day as completed; they are not persisted after refresh and are not shared with another device. The dashboard's **Reset all** button clears session drawings and discovered prompt history, then returns to onboarding; it does not delete artwork files.
+The participant picker is populated from Supabase display records and can expand beyond the initial two. Each active profile needs its own one-time claim code and 31 distinct daily assignments. On narrow screens, a floating glass navigation switches among Today (prompt and upload), Calendar, and Sketchbook; choosing an available calendar day returns to Today.
 
 ## Design system
 
 CSS custom properties at the top of `src/styles.css` are the source of truth for the supplied palette. Reusable glass panels use a translucent dark gradient, subtle border, inset highlight, and backdrop blur, with a solid dark fallback. Lato is used for UI and Great Vibes for the wordmark and script accents. Components are kept small and data-driven so the visual language can expand without tying it to the initial two participants.
 
-## Future integration points
+## Limitations
 
-- **Prompt service:** replace the deterministic `promptFor` demo function with an API that atomically assigns a prompt per challenge date and participant, enforcing no duplicate prompt for the same date.
-- **Unlock authority:** move the 6:00 am date check to server-side policy, using the challenge's agreed timezone. The client check is only a visual prototype rule and can be changed locally.
-- **Identity and participants:** replace the local profile selector with authenticated participant records while preserving stable participant IDs.
-- **Drawing storage/gallery:** upload files to object storage and persist metadata (participant ID, prompt/date, storage URL, visibility) in a backend. Define who can view drawings and whether daily work stays hidden until the physical book reveal before enabling shared reads.
-- **Offline behavior:** the PWA precaches the production shell. Persisting uploaded drawings offline and resolving later sync conflicts needs a deliberate storage/sync design.
-
-No Supabase integration or prompt backend is included in this foundation.
+Uploads require a network connection. Authentication, participant binding, date eligibility, prompt reveal, and drawing visibility are enforced by Supabase; client-side state is only used for the current screen. New participants require an active row, a one-time claim code, 31 distinct daily assignments, and matching Supabase Auth configuration.

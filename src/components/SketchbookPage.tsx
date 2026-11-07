@@ -5,10 +5,11 @@ import type { Drawing } from './Gallery';
 interface Props {
   drawings: Drawing[];
   participants: Participant[];
+  sharedReveal: boolean;
   onBack: () => void;
 }
 
-export function SketchbookPage({ drawings, participants, onBack }: Props) {
+export function SketchbookPage({ drawings, participants, sharedReveal, onBack }: Props) {
   const [zoomedDrawingIndex, setZoomedDrawingIndex] = useState<number | null>(null);
   const zoomedDrawing = zoomedDrawingIndex === null ? null : drawings[zoomedDrawingIndex];
   const moveDrawing = useCallback((offset: number) => {
@@ -42,7 +43,7 @@ export function SketchbookPage({ drawings, participants, onBack }: Props) {
       <header className="sketchbook-page__header">
         <span className="eyebrow">THE DIGITAL SKETCHBOOK</span>
         <h1>All the weird so far</h1>
-        <p>Drawings are saved in this browser session only.</p>
+        <p>{sharedReveal ? 'Both sketchbooks are open to each other.' : 'Your drawings stay private until both sketchbooks are complete.'}</p>
       </header>
       {drawings.length === 0
         ? <section className="glass-panel book-empty sketchbook-empty">
