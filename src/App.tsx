@@ -20,6 +20,7 @@ import {
   loadParticipants,
   loadPromptAssignments,
   revealPrompt as requestPromptReveal,
+  resetTestChallenge,
   saveDrawing,
   type ChallengeState,
   type PromptAssignment,
@@ -45,6 +46,7 @@ export default function App() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isRevealing, setIsRevealing] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
   const [showBook, setShowBook] = useState(false);
@@ -265,6 +267,27 @@ export default function App() {
     }
   };
 
+  const resetTestProgress = async () => {
+    if (!challengeState?.testMode || participantId !== 'sebastian') return;
+    if (!window.confirm('Reset both test sketchbooks? All test drawings and revealed prompts will be deleted. Profile bindings and claim codes will stay.')) return;
+
+    setIsResetting(true);
+    setErrorMessage('');
+    setNotice('');
+    try {
+      await resetTestChallenge();
+      await refreshChallenge();
+      setSelectedDay(1);
+      setShowBook(false);
+      setMobileTab('today');
+      setNotice('Both test sketchbooks were reset.');
+    } catch (error: unknown) {
+      setErrorMessage(describeBackendError(error));
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   const uploadDrawing = () => fileInput.current?.click();
 
   const handleFile = async (file?: File) => {
@@ -345,7 +368,7 @@ export default function App() {
   if (!session || !challengeState) return <main className="welcome-screen">
     <div className="welcome-orb welcome-orb--one"/><div className="welcome-orb welcome-orb--two"/>
     <div className="welcome-content">
-      <div className="welcome-brand"><img className="welcome-mascot" src="/assets/illustrations/cover.png" alt="" /><div className="brand-wordmark-row"><img className="brand-decoration brand-decoration--left" src="/assets/illustrations/decoration-left.svg" alt="" /><a className="wordmark" href="#top" aria-label="Weirdmas home">Weirdmas<span>®</span></a><img className="brand-decoration brand-decoration--right" src="/assets/illustrations/decoration-right.svg" alt="" /></div><span className="brand-caption welcome-brand-caption">DRAWING CHALLENGE</span></div>
+      <div className="welcome-brand"><img className="welcome-mascot" src="/assets/illustrations/cover.png" alt="" /><div className="brand-wordmark-row"><img className="brand-decoration brand-decoration--left" src="/assets/illustrations/decoration-left.svg" alt="" /><a className="wordmark" href="#top" aria-label="Weirdmas home">Weirdmas<span>®</span></a><img className="brand-decoration brand-decoration--right" src="/assets/illustrations/decoration-right.svg" alt="" /></div></div>
       <span className="eyebrow welcome-kicker">A DECEMBER DRAWING RITUAL</span>
       <h1 className="welcome-title">{session ? authStage === 'claim-code' ? 'Claim your profile' : 'Choose your profile' : authStage === 'email' ? 'Your sketchbook awaits' : authStage === 'otp' ? 'One small step' : 'Select your avatar'}</h1>
       <p className="welcome-description">Thirty-one days. One small prompt. A sketchbook that gets stranger together.</p>
@@ -367,6 +390,10 @@ export default function App() {
         <button className="button button--secondary dashboard-reset" type="button" onClick={() => { void signOut(); }}>Sign out</button>
       </header>
       <div className={`dashboard dashboard--${mobileTab}`}>
+        {challengeState.testMode && <aside className="test-mode-banner">
+          <div className="test-mode-banner__copy"><strong>TEST MODE</strong><span>Dates are bypassed; prompts still unlock one day at a time.</span></div>
+          {participantId === 'sebastian' && <button className="button button--secondary test-mode-reset" type="button" disabled={isResetting} onClick={() => { void resetTestProgress(); }}>{isResetting ? 'Resetting…' : 'Reset both test sketchbooks'}</button>}
+        </aside>}
         <section className="dashboard-intro">
           <div className="profile-day"><span className="profile-day-avatar" aria-hidden="true"><span className="avatar-fallback">{participant.name[0]}</span><img src={participant.avatarPath} alt="" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.parentElement?.classList.add('has-avatar-fallback'); }}/></span><div><span className="profile-date">A DRAWING CHALLENGE · DECEMBER 2026</span><h1>Day {selectedDay} <em>Hi {participant.name}</em></h1></div></div>
           <div className="dashboard-brand"><span className="brand-spark brand-spark--one">✳</span><span className="brand-spark brand-spark--two">✳</span><img className="dashboard-mascot" src="/assets/illustrations/cover.png" alt="" /><div className="brand-wordmark-row"><img className="brand-decoration brand-decoration--left" src="/assets/illustrations/decoration-left.svg" alt="" /><span className="wordmark">Weirdmas</span><img className="brand-decoration brand-decoration--right" src="/assets/illustrations/decoration-right.svg" alt="" /></div><span className="brand-caption">DRAWING CHALLENGE</span></div>

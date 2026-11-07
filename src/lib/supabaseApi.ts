@@ -11,6 +11,7 @@ export interface ChallengeState {
   activeDay: number | null;
   completedDays: number[];
   sharedReveal: boolean;
+  testMode: boolean;
 }
 
 export interface PromptAssignment {
@@ -62,8 +63,12 @@ export async function bindParticipant(participantId: string, claimCode: string):
 
 export async function loadChallengeState(): Promise<ChallengeState | null> {
   const client = requireSupabase();
-  const { data, error } = await client.rpc('my_challenge_state');
+  const [{ data, error }, { data: testMode, error: testModeError }] = await Promise.all([
+    client.rpc('my_challenge_state'),
+    client.rpc('is_test_mode'),
+  ]);
   if (error) throw new Error(error.message);
+  if (testModeError) throw new Error(testModeError.message);
   const first: unknown = Array.isArray(data) ? data[0] : data;
   if (!isRecord(first) || typeof first.participant_id !== 'string') return null;
 
@@ -76,7 +81,14 @@ export async function loadChallengeState(): Promise<ChallengeState | null> {
     activeDay,
     completedDays,
     sharedReveal: first.shared_reveal === true,
+    testMode: testMode === true,
   };
+}
+
+export async function resetTestChallenge(): Promise<void> {
+  const client = requireSupabase();
+  const { error } = await client.rpc('reset_test_challenge');
+  if (error) throw new Error(error.message);
 }
 
 export async function loadPromptAssignments(): Promise<PromptAssignment[]> {

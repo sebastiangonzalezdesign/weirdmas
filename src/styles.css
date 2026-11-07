@@ -14,7 +14,6 @@
 .welcome-brand{display:flex;flex-direction:column;align-items:center}
 .welcome-mascot{display:block;width:76px;height:124px;object-fit:contain;margin:0 auto -8px}
 .welcome-brand .wordmark{font-size:76px}
-.welcome-brand-caption{margin-top:13px;font-size:12px;padding:6px 18px}
 .welcome-kicker{margin:23px 0 8px}
 .welcome-title{font-size:26px!important;font-weight:400!important;letter-spacing:0!important}
 .welcome-description{margin:9px auto 18px;font-size:13px}
@@ -162,6 +161,7 @@
 }
 @media(max-width:430px){
   .topbar{gap:8px;padding:0 12px}
+  .topbar-center{display:none}
   .topbar-greeting{display:none}
   .dashboard-reset{padding:6px 8px;font-size:9px}
 }
@@ -194,9 +194,18 @@
 .form-message--error{border-color:rgba(216,65,63,.46);background:rgba(100,31,37,.28);color:#ffd4d0}
 .form-message--success{border-color:rgba(35,166,158,.38);background:rgba(18,92,89,.25);color:#c3efea}
 .dashboard-message{margin:0 auto 16px}
+.test-mode-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 24px;padding:12px 16px;border:1px solid rgba(216,65,63,.38);border-radius:14px;background:rgba(100,31,37,.16)}
+.test-mode-banner__copy{display:grid;gap:4px}
+.test-mode-banner__copy strong{color:#ffd4d0;font-size:10px;letter-spacing:.16em}
+.test-mode-banner__copy span{color:#c6b6b7;font-size:12px;line-height:1.45}
+.test-mode-reset{flex-shrink:0}
 .topbar-profile strong{font-size:12px}
 .topbar-profile .tiny-avatar{overflow:hidden;position:relative}
 .tiny-avatar img{position:absolute;width:100%;height:100%;object-fit:cover}
 @media(max-width:430px){
   .topbar-profile strong{font-size:10px}
+}
+@media(max-width:600px){
+  .test-mode-banner{align-items:stretch;flex-direction:column}
+  .test-mode-reset{width:100%}
 }

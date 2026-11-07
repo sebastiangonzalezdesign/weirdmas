@@ -42,7 +42,8 @@ The active preview assets are `public/assets/avatars/Lu.svg`, `public/assets/ava
 ## Supabase setup
 
 1. In the Supabase project, open **SQL Editor**, run the migration in `supabase/migrations/20260601000000_weirdmas_challenge.sql`, and confirm it completes.
-2. Generate one private, one-time profile code per participant in the SQL Editor:
+2. Before prelaunch testing, run the follow-up migration in `supabase/migrations/20261107182500_weirdmas_test_mode.sql`. It temporarily bypasses date locks while preserving sequential, one-day-at-a-time progression.
+3. Generate one private, one-time profile code per participant in the SQL Editor:
 
    ```sql
    select public.issue_participant_claim_code('lu');
@@ -50,10 +51,20 @@ The active preview assets are `public/assets/avatars/Lu.svg`, `public/assets/ava
    ```
 
    Each query returns a random code once. Share each code privately with its participant; do not put the codes in the app, source control, or chat. A code can be claimed only once. If an unused code needs to be replaced, run its query again; a claimed profile cannot be re-issued through this function.
-3. Each participant selects their profile, enters their own email, verifies the emailed OTP, then enters their one-time profile code. The verified email account is permanently bound to that profile. Email addresses do not need to be added to Supabase in advance. Future sign-ins need only the email OTP.
-4. Copy `.env.example` to `.env.local`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from the Supabase project's API settings. The publishable/anon key is intended for the browser; never expose a service-role or secret key.
-5. Add those same two values to the Vercel project's Environment Variables for the environments you deploy, then redeploy. The app displays an explicit configuration error if these values are missing.
-6. Supabase Auth must allow the deployed app's URL. The email OTP template should contain `{{ .Token }}`; SMTP delivery can use the configured Resend sender.
+4. Each participant selects their profile, enters their own email, verifies the emailed OTP, then enters their one-time profile code. The verified email account is permanently bound to that profile. Email addresses do not need to be added to Supabase in advance. Future sign-ins need only the email OTP.
+5. Copy `.env.example` to `.env.local`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from the Supabase project's API settings. The publishable/anon key is intended for the browser; never expose a service-role or secret key.
+6. Add those same two values to the Vercel project's Environment Variables for the environments you deploy, then redeploy. The app displays an explicit configuration error if these values are missing.
+7. Supabase Auth must allow the deployed app's URL. The email OTP template should contain `{{ .Token }}`; SMTP delivery can use the configured Resend sender.
+
+While test mode is on, the Sebastian profile has a reset button that deletes both participants' test drawings and revealed prompts while preserving their profile bindings and claim codes. After testing, disable test mode in SQL Editor:
+
+```sql
+update public.challenge_settings
+set test_mode = false
+where singleton = true;
+```
+
+Reload the app after disabling test mode to restore the December date locks and hide the reset control.
 
 The migration seeds Lu, Sebastian, all 31 prompts, and deterministic assignments. A unique database constraint guarantees different prompts for participants on each day. It also creates the private `weirdmas-drawings` bucket, row-level security policies, and server-side eligibility checks. The challenge unlock time is 6:00 am in `America/Bogota`; each participant must complete their earliest due day before a later incomplete day opens. Missed days do not expire. A participant can replace their own drawing for a completed day until the shared reveal.
 
