@@ -37,7 +37,7 @@ The current worktree includes portrait SVGs and a transparent mascot PNG, which 
 
 The active preview assets are `public/assets/avatars/Lu.svg`, `public/assets/avatars/Sebastian.svg`, `public/assets/illustrations/cover.png`, the left/right decoration SVGs, `public/assets/illustrations/calendar-shape.svg`, and `public/assets/illustrations/Book.svg`. Participant records in `src/data/participants.ts` own their display names, profile labels, and avatar paths; illustration paths are set in `src/App.tsx`, `src/components/Gallery.tsx`, and calendar styles. Keep filenames stable or update those references when replacing artwork. Missing portraits fall back to initials. SVG is preferred for simple vector illustrations; use optimized WebP/PNG for raster artwork. Recommended profile source size is 512 × 512 px and cover source size is at least 1200 × 800 px. Add new participants as records in the same array; IDs must be unique and stable.
 
-`public/assets/brand/weirdmas-mark.svg` is a simple install icon, not final character art.
+`public/assets/brand/weirdmas-mark.png` is the Weirdmas home-screen icon source. The 180 px variant is used by iPhone home-screen installation; 192 px and 512 px variants are used by the PWA manifest.
 
 ## Supabase setup
 
