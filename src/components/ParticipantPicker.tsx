@@ -4,12 +4,15 @@ interface Props { participants: Participant[]; selectedId: string; onSelect: (id
 
 export function ParticipantPicker({ participants, selectedId, onSelect, compact = false }: Props) {
   return <div className={`participant-list ${compact ? 'participant-list--compact' : ''}`} role="group" aria-label="Choose your profile">
-    {participants.map((participant, index) => {
+    {participants.map((participant) => {
       const selected = participant.id === selectedId;
       return <button className={`participant ${selected ? 'is-selected' : ''}`} key={participant.id} onClick={() => onSelect(participant.id)} aria-pressed={selected}>
-        <span className="avatar-tile" aria-hidden="true"><span>{participant.name.slice(0, 1).toUpperCase()}</span></span>
+        <span className="avatar-tile" aria-hidden="true">
+          <span className="avatar-fallback">{participant.name.slice(0, 1).toUpperCase()}</span>
+          <img src={participant.avatarPath} alt="" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.parentElement?.classList.add('has-avatar-fallback'); }} />
+        </span>
         <span className="participant-name">{participant.name}</span>
-        {!compact && <span className="participant-role">{index === 0 ? 'Illustrator' : 'Maker'}</span>}
+        {!compact && <span className="participant-role">{participant.role}</span>}
       </button>;
     })}
   </div>;

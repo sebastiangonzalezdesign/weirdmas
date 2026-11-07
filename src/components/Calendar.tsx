@@ -1,5 +1,5 @@
 import { Icon } from './Icon';
-import { formatChallengeDate, isDayUnlocked, promptFor } from '../lib/challenge';
+import { formatChallengeDate, isDayUnlocked, isDayUnlockedByDate, promptFor } from '../lib/challenge';
 import type { Participant } from '../data/participants';
 
 interface Props { selectedDay: number; onSelectDay: (day: number) => void; participant: Participant; completedDays: number[] }
@@ -15,13 +15,14 @@ export function Calendar({ selectedDay, onSelectDay, participant, completedDays 
         const day = index + 1;
         const unlocked = isDayUnlocked(day);
         const completed = completedDays.includes(day);
+        const visuallyLocked = !import.meta.env.DEV && !isDayUnlockedByDate(day) && !completed;
         const selected = selectedDay === day;
-        const title = unlocked ? `${formatChallengeDate(day)}: ${promptFor(day, participant.id).title}${completed ? ', drawing uploaded' : ''}` : `${formatChallengeDate(day)}, locked until 6 am`;
-        return <button key={day} className={`day-cell ${unlocked ? 'day-cell--open' : 'day-cell--locked'} ${completed ? 'day-cell--complete' : ''} ${selected ? 'is-current' : ''}`} onClick={() => unlocked && onSelectDay(day)} disabled={!unlocked} aria-label={title} aria-pressed={selected}>
-          {completed ? <Icon name="check" /> : unlocked ? day : <><span>{day}</span><Icon name="lock" /></>}
+        const title = unlocked ? `${formatChallengeDate(day)}: ${promptFor(day, participant.id).title}${completed ? ', drawing uploaded' : ''}${visuallyLocked ? ', locked appearance but available for testing' : ''}` : `${formatChallengeDate(day)}, locked until 6 am`;
+        return <button key={day} className={`day-cell ${visuallyLocked ? 'day-cell--locked' : 'day-cell--open'} ${completed ? 'day-cell--complete' : ''} ${selected ? 'is-current' : ''}`} onClick={() => unlocked && onSelectDay(day)} disabled={!unlocked} aria-label={title} aria-pressed={selected}>
+          {completed ? <Icon name="check" /> : <span>{day}</span>}
         </button>;
       })}
     </div>
-    <div className="calendar-legend"><span><i className="legend-dot legend-dot--open"/>Available</span><span><i className="legend-dot legend-dot--locked"/>Locked</span><span><i className="legend-dot legend-dot--complete"/>Created</span></div>
+    <div className="calendar-legend"><span><i className="legend-dot legend-dot--open"/>Available</span>{!import.meta.env.DEV && <span><i className="legend-dot legend-dot--locked"/>Locked</span>}<span><i className="legend-dot legend-dot--complete"/>Created</span></div>
   </section>;
 }

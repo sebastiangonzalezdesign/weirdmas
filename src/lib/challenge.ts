@@ -4,9 +4,13 @@ import { prompts, type Prompt } from '../data/prompts';
 export const challengeYear = 2026;
 export const unlockHour = 6;
 
-export function isDayUnlocked(day: number, now = new Date()): boolean {
+export function isDayUnlockedByDate(day: number, now = new Date()): boolean {
   const dayStart = new Date(challengeYear, 11, day, unlockHour, 0, 0, 0);
   return now >= dayStart;
+}
+
+export function isDayUnlocked(day: number, now = new Date()): boolean {
+  return import.meta.env.DEV || isDayUnlockedByDate(day, now);
 }
 
 function hash(value: string): number {

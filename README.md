@@ -23,32 +23,35 @@ Use HTTPS or localhost to test PWA installation and service-worker behavior. The
 
 ## Artwork upload slots
 
-No character artwork is included. Add the assets at these exact paths when ready:
+The current worktree includes portrait SVGs and a transparent mascot PNG, which are used in onboarding and the dashboard. For final replacements, use these stable slots:
 
 | Slot | Path | Intended use |
 |---|---|---|
 | Lu profile portrait | `public/assets/avatars/lu.png` | Profile selection and participant avatar; square PNG, transparent or solid background |
 | Sebastian profile portrait | `public/assets/avatars/sebastian.png` | Profile selection and participant avatar; square PNG, transparent or solid background |
 | Challenge cover | `public/assets/illustrations/weirdmas-cover.webp` | Optional welcome/dashboard decorative image; landscape 3:2 |
+| Left/right wordmark decorations | `public/assets/illustrations/decoration-left.svg`, `decoration-right.svg` | Decorative illustrations on either side of the wordmark |
+| Calendar day tile | `public/assets/illustrations/calendar-shape.svg` | Background shape for available, locked, and completed days |
+| Sketchbook empty-state icon | `public/assets/illustrations/Book.svg` | Icon shown when no drawings are saved for the selected day |
 | Empty sketchbook illustration | `public/assets/illustrations/empty-sketchbook.svg` | Optional replacement for the CSS-drawn gallery empty state |
 
-Keep uploaded image filenames stable. Participant records in `src/data/participants.ts` own their avatar paths. SVG is preferred for simple vector illustrations; use optimized WebP/PNG for raster artwork. Recommended profile source size is 512 × 512 px and cover source size is at least 1200 × 800 px. Add new participants as records in the same array; IDs must be unique and stable.
+The active preview assets are `public/assets/avatars/Lu.svg`, `public/assets/avatars/Sebastian.svg`, `public/assets/illustrations/cover.png`, the left/right decoration SVGs, `public/assets/illustrations/calendar-shape.svg`, and `public/assets/illustrations/Book.svg`. Participant records in `src/data/participants.ts` own their display names, profile labels, and avatar paths; illustration paths are set in `src/App.tsx`, `src/components/Gallery.tsx`, and calendar styles. Keep filenames stable or update those references when replacing artwork. Missing portraits fall back to initials. SVG is preferred for simple vector illustrations; use optimized WebP/PNG for raster artwork. Recommended profile source size is 512 × 512 px and cover source size is at least 1200 × 800 px. Add new participants as records in the same array; IDs must be unique and stable.
 
-The app shell currently uses CSS initials and abstract shapes so missing artwork never produces broken-image placeholders. `public/assets/brand/weirdmas-mark.svg` is a simple install icon, not final character art.
+`public/assets/brand/weirdmas-mark.svg` is a simple install icon, not final character art.
 
 ## Structure
 
 ```text
 src/
-  components/       Reusable calendar, participant picker, prompt, gallery, and icon
+  components/       Reusable calendar, mobile navigation, participant picker, prompt, gallery, sketchbook page, and icon
   data/             Participant configuration and the 31 prompt records
   lib/               Challenge date, unlock, and local assignment rules
-  App.tsx            Onboarding and dashboard composition
+  App.tsx            Onboarding, dashboard, and sketchbook-page composition
   styles.css         Design tokens, glass surface, responsive layouts, component styles
 public/assets/       PWA icon and reserved artwork upload slots
 ```
 
-The initial participant list contains Lu and Sebastian. The picker reads an array, not a two-person conditional. For a given date, prompt assignment is deterministic in this local prototype and distinct between participants while there are enough prompts. The calendar is for December 2026 and each date unlocks at 6:00 am in the device's local timezone. Drawings uploaded in the current browser session appear in that session's gallery and mark that profile/day as completed; they are not persisted after refresh and are not shared with another device.
+The initial participant list contains Lu and Sebastian. The picker reads an array, not a two-person conditional. For a given date, prompt assignment is deterministic in this local prototype and distinct between participants while there are enough prompts. The calendar is for December 2026 and each date unlocks at 6:00 am in the device's local timezone. In Vite development mode every day appears available and is clickable for testing; days with uploaded drawings retain their **Created** state. Production builds show future days as locked and enforce the date gate. On narrow screens, a floating glass navigation switches among Today (prompt and upload), Calendar, and Sketchbook; choosing a calendar day returns to Today. Drawings uploaded in the current browser session appear in the sketchbook and mark that profile/day as completed; they are not persisted after refresh and are not shared with another device. The dashboard's **Reset all** button clears session drawings and discovered prompt history, then returns to onboarding; it does not delete artwork files.
 
 ## Design system
 
