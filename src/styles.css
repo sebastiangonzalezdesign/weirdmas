@@ -185,10 +185,10 @@
 }
 .auth-form{display:grid;gap:12px}
 .auth-label{margin-top:8px;color:#c5d0da;font-size:12px;font-weight:700}
-.auth-input{width:100%;min-height:48px;padding:12px 14px;border:1px solid var(--line);border-radius:11px;background:rgba(8,22,33,.64);color:#fff;font:inherit;font-size:15px}
+.auth-input{width:100%;min-height:48px;padding:12px 14px;border:1px solid var(--line);border-radius:11px;background:rgba(8,22,33,.64);color:#fff;font:inherit;font-size:16px}
 .auth-input:focus{outline:2px solid #9fcaff;outline-offset:2px}
 .auth-input--otp{text-align:center;font-size:22px;font-weight:700;letter-spacing:.28em}
-.auth-input--claim-code{text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;letter-spacing:.06em}
+.auth-input--claim-code{text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;letter-spacing:.06em}
 .auth-back{justify-self:center;margin-top:3px}
 .form-message{width:min(100%,510px);margin:12px auto;padding:11px 14px;border:1px solid var(--line);border-radius:11px;font-size:12px;line-height:1.55}
 .form-message--error{border-color:rgba(216,65,63,.46);background:rgba(100,31,37,.28);color:#ffd4d0}
