@@ -117,8 +117,8 @@
 .day-cell::before{content:'';position:absolute;z-index:0;inset:0;background-color:var(--day-cell-fill);mask-image:url('/assets/illustrations/calendar-shape.svg');mask-position:center;mask-repeat:no-repeat;mask-size:auto 100%;-webkit-mask-image:url('/assets/illustrations/calendar-shape.svg');-webkit-mask-position:center;-webkit-mask-repeat:no-repeat;-webkit-mask-size:auto 100%;pointer-events:none}
 .day-cell>span,.day-cell>svg{position:relative;z-index:1}
 .day-cell--locked{--day-cell-fill:#A9AAAB;background:transparent}
-.day-cell--open{--day-cell-fill:#7DA6DA;background:transparent}
-.day-cell--complete{--day-cell-fill:#23A69E;background:transparent}
+.day-cell--open{--day-cell-fill:var(--color-calendar-active);background:transparent}
+.day-cell--complete{--day-cell-fill:var(--color-completed);background:transparent}
 .empty-art{display:grid;place-items:center}
 .empty-art img{display:block;width:48px;height:48px;max-width:100%;max-height:100%;object-fit:contain}
 .prompt-followup{max-width:320px;margin:0;color:#a7b4c1;font-size:11px;line-height:1.45;text-align:center}
@@ -245,4 +245,12 @@
   .sketchbook-export-dialog__inner{padding:20px}
   .sketchbook-export-dialog__header h2{font-size:21px}
   .sketchbook-export-actions .button{flex:1}
+}
+:root{
+  --color-calendar-active:#83B7F9;
+  --color-completed:#23A63F;
+}
+.brand-caption::before,.brand-caption::after{content:none;display:none}
+@media(max-width:430px){
+  .dashboard-mascot{width:80px;height:132px}
 }
