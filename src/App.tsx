@@ -8,7 +8,7 @@ import { MobileBottomNav, type MobileTab } from './components/MobileBottomNav';
 import { ParticipantPicker } from './components/ParticipantPicker';
 import { PromptCard } from './components/PromptCard';
 import { SketchbookPage } from './components/SketchbookPage';
-import { UploadCard } from './components/UploadCard';
+import { UploadCard, type UploadFeedback } from './components/UploadCard';
 import { participants as initialParticipants } from './data/participants';
 import type { Participant } from './data/participants';
 import { supabase, supabaseConfigurationError } from './lib/supabase';
@@ -49,6 +49,7 @@ export default function App() {
   const [isResetting, setIsResetting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
+  const [uploadFeedback, setUploadFeedback] = useState<UploadFeedback | null>(null);
   const [showBook, setShowBook] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>('today');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -124,7 +125,6 @@ export default function App() {
   const completedDays = challengeState?.completedDays ?? noCompletedDays;
   const activeDay = challengeState?.activeDay ?? null;
   const promptTitle = promptAssignments.find((assignment) => assignment.day === selectedDay)?.title;
-  const selectedDayDrawing = drawings.find((drawing) => drawing.participantId === participantId && drawing.day === selectedDay);
   const canEditSelectedDay = Boolean(challengeState && !challengeState.sharedReveal && (selectedDay === activeDay || completedDays.includes(selectedDay)));
   const availableDays = useMemo(() => activeDay === null ? completedDays : [...completedDays, activeDay], [activeDay, completedDays]);
 
@@ -136,6 +136,7 @@ export default function App() {
   const continueFromProfile = async () => {
     setErrorMessage('');
     setNotice('');
+    setUploadFeedback(null);
     if (!participant) return;
     if (!session) {
       setAuthStage('email');
@@ -251,6 +252,7 @@ export default function App() {
     setOtp('');
     setClaimCode('');
     setNotice('');
+    setUploadFeedback(null);
   };
 
   const revealSelectedPrompt = async () => {
@@ -290,17 +292,48 @@ export default function App() {
 
   const uploadDrawing = () => fileInput.current?.click();
 
-  const handleFile = async (file?: File) => {
-    if (!file || !challengeState || !canEditSelectedDay) return;
+  const handleFiles = async (files: File[]) => {
+    if (files.length === 0 || !challengeState || !canEditSelectedDay) return;
+    const uploadDay = selectedDay;
+    const uploadParticipantId = participantId;
     setIsSaving(true);
     setErrorMessage('');
     setNotice('');
+    setUploadFeedback(null);
+    let savedCount = 0;
+    const failures: string[] = [];
     try {
-      const warning = await saveDrawing(file, participantId, selectedDay, selectedDayDrawing?.storagePath);
-      await refreshChallenge(false);
-      setNotice(warning ?? 'Your drawing is saved to your private sketchbook.');
-    } catch (error: unknown) {
-      setErrorMessage(describeBackendError(error));
+      for (const file of files) {
+        try {
+          await saveDrawing(file, uploadParticipantId, uploadDay);
+          savedCount += 1;
+        } catch (error: unknown) {
+          failures.push(`${file.name}: ${describeBackendError(error)}`);
+        }
+      }
+
+      let refreshError = '';
+      if (savedCount > 0) {
+        try {
+          await refreshChallenge(false);
+        } catch (error: unknown) {
+          refreshError = describeBackendError(error);
+        }
+      }
+
+      if (failures.length === 0 && !refreshError) {
+        const label = savedCount === 1 ? 'drawing' : 'drawings';
+        setUploadFeedback({
+          kind: 'success',
+          message: `${savedCount} ${label} saved to Day ${uploadDay}. You can add more by selecting that day in the calendar.`,
+        });
+      } else {
+        const summary = savedCount > 0
+          ? `${savedCount} of ${files.length} drawings saved to Day ${uploadDay}.`
+          : 'No drawings were saved.';
+        const details = [...failures, refreshError ? `Could not refresh the sketchbook: ${refreshError}` : ''].filter(Boolean).join(' ');
+        setUploadFeedback({ kind: 'error', message: `${summary} ${details}`.trim() });
+      }
     } finally {
       setIsSaving(false);
     }
@@ -361,7 +394,7 @@ export default function App() {
 
   if (!authReady) return <main className="welcome-screen"><div className="welcome-content"><p className="welcome-description">Connecting to your private sketchbook…</p></div></main>;
   if (showBook && challengeState) return <>
-    <SketchbookPage drawings={drawings} participants={participants} sharedReveal={challengeState.sharedReveal} onBack={() => selectMobileTab('today')} />
+    <SketchbookPage drawings={drawings} participants={participants} participant={participant} prompts={promptAssignments} currentDay={selectedDay} sharedReveal={challengeState.sharedReveal} onBack={() => selectMobileTab('today')} />
     <MobileBottomNav activeTab="sketchbook" onSelect={selectMobileTab} />
   </>;
 
@@ -404,17 +437,17 @@ export default function App() {
         {challengeState.sharedReveal && <p className="form-message form-message--success dashboard-message" role="status">Both sketchbooks are complete. Shared drawings are now open.</p>}
         <div className="dashboard-grid">
           <div className="dashboard-column dashboard-column--left">
-            <Calendar selectedDay={selectedDay} onSelectDay={(day) => { setSelectedDay(day); setErrorMessage(''); setNotice(''); selectMobileTab('today'); }} completedDays={completedDays} activeDay={activeDay} availableDays={availableDays}/>
+            <Calendar selectedDay={selectedDay} onSelectDay={(day) => { setSelectedDay(day); setErrorMessage(''); setNotice(''); setUploadFeedback(null); selectMobileTab('today'); }} completedDays={completedDays} activeDay={activeDay} availableDays={availableDays}/>
             <Gallery drawings={drawings} participants={participants} activeDay={selectedDay} sharedReveal={challengeState.sharedReveal} onOpen={() => selectMobileTab('sketchbook')}/>
           </div>
           <div className="dashboard-column dashboard-column--right">
             <PromptCard day={selectedDay} participant={participant} promptTitle={promptTitle} unlocked={selectedDay === activeDay} uploaded={completedDays.includes(selectedDay)} onReveal={() => { void revealSelectedPrompt(); }} isRevealing={isRevealing}/>
-            <UploadCard onUpload={uploadDrawing} disabled={!canEditSelectedDay || isSaving || dashboardLoading} saving={isSaving}/>
+            <UploadCard onUpload={uploadDrawing} disabled={!canEditSelectedDay || isSaving || dashboardLoading} saving={isSaving} feedback={uploadFeedback}/>
           </div>
         </div>
         <footer className="footer-note"><span>PRIVATE DRAWINGS · SHARED AFTER BOTH FINISH</span><span>6:00 am Bogotá time <i/> {participants.length} artists <i/> all kinds of weird</span></footer>
       </div>
-      <input ref={fileInput} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={!canEditSelectedDay || isSaving} onChange={(event) => { void handleFile(event.target.files?.[0]); event.currentTarget.value = ''; }}/>
+      <input ref={fileInput} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={!canEditSelectedDay || isSaving} onChange={(event) => { void handleFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }}/>
     </main>
     <MobileBottomNav activeTab={mobileTab} onSelect={selectMobileTab} />
   </>;

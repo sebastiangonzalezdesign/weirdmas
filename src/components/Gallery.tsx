@@ -1,7 +1,7 @@
 import type { Participant } from '../data/participants';
 import { Icon } from './Icon';
 
-export interface Drawing { id: string; name: string; participantId: string; day: number; url: string; storagePath?: string }
+export interface Drawing { id: string; name: string; participantId: string; day: number; url: string; storagePath: string }
 interface Props { drawings: Drawing[]; participants: Participant[]; activeDay: number; sharedReveal?: boolean; onOpen: () => void }
 
 export function Gallery({ drawings, participants, activeDay, sharedReveal = false, onOpen }: Props) {

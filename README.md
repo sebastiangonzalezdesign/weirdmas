@@ -43,7 +43,8 @@ The active preview assets are `public/assets/avatars/Lu.svg`, `public/assets/ava
 
 1. In the Supabase project, open **SQL Editor**, run the migration in `supabase/migrations/20260601000000_weirdmas_challenge.sql`, and confirm it completes.
 2. Before prelaunch testing, run the follow-up migration in `supabase/migrations/20261107182500_weirdmas_test_mode.sql`. It temporarily bypasses date locks while preserving sequential, one-day-at-a-time progression.
-3. Generate one private, one-time profile code per participant in the SQL Editor:
+3. Run `supabase/migrations/20261107190000_weirdmas_multiple_drawings_per_day.sql` to allow multiple images per participant per day.
+4. Generate one private, one-time profile code per participant in the SQL Editor:
 
    ```sql
    select public.issue_participant_claim_code('lu');
@@ -51,10 +52,10 @@ The active preview assets are `public/assets/avatars/Lu.svg`, `public/assets/ava
    ```
 
    Each query returns a random code once. Share each code privately with its participant; do not put the codes in the app, source control, or chat. A code can be claimed only once. If an unused code needs to be replaced, run its query again; a claimed profile cannot be re-issued through this function.
-4. Each participant selects their profile, enters their own email, verifies the emailed OTP, then enters their one-time profile code. The verified email account is permanently bound to that profile. Email addresses do not need to be added to Supabase in advance. Future sign-ins need only the email OTP.
-5. Copy `.env.example` to `.env.local`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from the Supabase project's API settings. The publishable/anon key is intended for the browser; never expose a service-role or secret key.
-6. Add those same two values to the Vercel project's Environment Variables for the environments you deploy, then redeploy. The app displays an explicit configuration error if these values are missing.
-7. Supabase Auth must allow the deployed app's URL. The email OTP template should contain `{{ .Token }}`; SMTP delivery can use the configured Resend sender.
+5. Each participant selects their profile, enters their own email, verifies the emailed OTP, then enters their one-time profile code. The verified email account is permanently bound to that profile. Email addresses do not need to be added to Supabase in advance. Future sign-ins need only the email OTP.
+6. Copy `.env.example` to `.env.local`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from the Supabase project's API settings. The publishable/anon key is intended for the browser; never expose a service-role or secret key.
+7. Add those same two values to the Vercel project's Environment Variables for the environments you deploy, then redeploy. The app displays an explicit configuration error if these values are missing.
+8. Supabase Auth must allow the deployed app's URL. The email OTP template should contain `{{ .Token }}`; SMTP delivery can use the configured Resend sender.
 
 While test mode is on, the Sebastian profile has a reset button that deletes both participants' test drawings and revealed prompts while preserving their profile bindings and claim codes. After testing, disable test mode in SQL Editor:
 
@@ -66,7 +67,7 @@ where singleton = true;
 
 Reload the app after disabling test mode to restore the December date locks and hide the reset control.
 
-The migration seeds Lu, Sebastian, all 31 prompts, and deterministic assignments. A unique database constraint guarantees different prompts for participants on each day. It also creates the private `weirdmas-drawings` bucket, row-level security policies, and server-side eligibility checks. The challenge unlock time is 6:00 am in `America/Bogota`; each participant must complete their earliest due day before a later incomplete day opens. Missed days do not expire. A participant can replace their own drawing for a completed day until the shared reveal.
+The migration seeds Lu, Sebastian, all 31 prompts, and deterministic assignments. A unique database constraint guarantees different prompts for participants on each day. It also creates the private `weirdmas-drawings` bucket, row-level security policies, and server-side eligibility checks. The challenge unlock time is 6:00 am in `America/Bogota`; each participant must complete their earliest due day before a later incomplete day opens. Missed days do not expire. Participants can upload multiple images to an eligible day, including a completed day, until the shared reveal. There is no per-day image limit; each image must be 10 MB or smaller. Select multiple images at once or return to a completed day in the calendar to add more later.
 
 Each participant can read only their own drawings and revealed prompts until both active participants have all 31 drawings. An organizer can manually release histories from the Supabase SQL Editor if needed:
 
@@ -77,6 +78,8 @@ where singleton = true;
 ```
 
 Uploaded images are limited to PNG, JPEG, WebP, or GIF, up to 10 MB. The bucket remains private; the app requests temporary signed URLs. The app does not currently queue uploads offline.
+
+From the sketchbook, each participant can create a PDF of their own work so far, the currently selected day, or chosen days. PDF pages include the day, date, and prompt; images are optimized in the browser, and animated GIFs export as still images. The PDF is generated locally from the participant's private storage objects and can be shared through the device share sheet or downloaded. This does not change the in-app shared-reveal rule.
 
 Vercel deployments connected to GitHub run when the configured branch is pushed. The PWA is configured to update automatically when a new production build is available. The Supabase migration and one-time profile codes still need to be applied/configured in the project before participants can sign in.
 

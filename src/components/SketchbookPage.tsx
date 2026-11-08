@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Participant } from '../data/participants';
+import type { PromptAssignment } from '../lib/supabaseApi';
 import type { Drawing } from './Gallery';
+import { SketchbookExportDialog } from './SketchbookExportDialog';
 
 interface Props {
   drawings: Drawing[];
   participants: Participant[];
+  participant: Participant;
+  prompts: PromptAssignment[];
+  currentDay: number;
   sharedReveal: boolean;
   onBack: () => void;
 }
 
-export function SketchbookPage({ drawings, participants, sharedReveal, onBack }: Props) {
+export function SketchbookPage({ drawings, participants, participant, prompts, currentDay, sharedReveal, onBack }: Props) {
   const [zoomedDrawingIndex, setZoomedDrawingIndex] = useState<number | null>(null);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const zoomedDrawing = zoomedDrawingIndex === null ? null : drawings[zoomedDrawingIndex];
+  const ownDrawings = drawings.filter((drawing) => drawing.participantId === participant.id);
   const moveDrawing = useCallback((offset: number) => {
     setZoomedDrawingIndex((index) => index === null ? null : Math.max(0, Math.min(drawings.length - 1, index + offset)));
   }, [drawings.length]);
@@ -39,11 +46,12 @@ export function SketchbookPage({ drawings, participants, sharedReveal, onBack }:
     <div className="sketchbook-page__inner">
       <div className="sketchbook-page__toolbar">
         <button className="text-button sketchbook-back" type="button" onClick={onBack}><span aria-hidden="true">←</span> Back to dashboard</button>
+        <button className="button button--secondary sketchbook-share-action" type="button" onClick={() => setIsExportDialogOpen(true)} disabled={ownDrawings.length === 0} aria-haspopup="dialog">Share PDF</button>
       </div>
       <header className="sketchbook-page__header">
         <span className="eyebrow">THE DIGITAL SKETCHBOOK</span>
         <h1>All the weird so far</h1>
-        <p>{sharedReveal ? 'Both sketchbooks are open to each other.' : 'Your drawings stay private until both sketchbooks are complete.'}</p>
+        <p>{sharedReveal ? 'Both sketchbooks are open to each other.' : 'Your drawings stay private in the app until both sketchbooks are complete. You can export your own work as a PDF.'}</p>
       </header>
       {drawings.length === 0
         ? <section className="glass-panel book-empty sketchbook-empty">
@@ -70,5 +78,6 @@ export function SketchbookPage({ drawings, participants, sharedReveal, onBack }:
       </div>
       <p id="drawing-lightbox-title">{artistName(zoomedDrawing)} · Day {zoomedDrawing.day} · {zoomedDrawing.name}</p>
     </div>}
+    {isExportDialogOpen && <SketchbookExportDialog drawings={ownDrawings} participant={participant} prompts={prompts} currentDay={currentDay} onClose={() => setIsExportDialogOpen(false)} />}
   </main>;
 }

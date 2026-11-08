@@ -109,24 +109,35 @@ export async function loadPromptAssignments(): Promise<PromptAssignment[]> {
 
 export async function loadDrawings(): Promise<Drawing[]> {
   const client = requireSupabase();
-  const { data, error } = await client
-    .from('drawings')
-    .select('id,participant_id,day,name,storage_path')
-    .order('day');
-  if (error) throw new Error(error.message);
-  const rows: unknown = data;
-  if (!Array.isArray(rows)) throw new Error('The drawing response was not a list.');
-  const records = rows.filter((row): row is Record<string, unknown> => isRecord(row));
+  const pageSize = 500;
+  const records: Record<string, unknown>[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await client
+      .from('drawings')
+      .select('id,participant_id,day,name,storage_path')
+      .order('day')
+      .order('uploaded_at')
+      .range(offset, offset + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const rows: unknown = data;
+    if (!Array.isArray(rows)) throw new Error('The drawing response was not a list.');
+    records.push(...rows.filter((row): row is Record<string, unknown> => isRecord(row)));
+    if (rows.length < pageSize) break;
+  }
 
   if (records.length === 0) return [];
   const paths = records.map((row) => row.storage_path);
   if (paths.some((path) => typeof path !== 'string')) throw new Error('A saved drawing has an invalid storage path.');
   const validPaths = paths.filter((path): path is string => typeof path === 'string');
-  const { data: signedUrls, error: signingError } = await client.storage
-    .from(bucketName)
-    .createSignedUrls(validPaths, 3600);
-  if (signingError) throw new Error(signingError.message);
-  if (!signedUrls || signedUrls.length !== records.length) throw new Error('Could not create secure links for every drawing.');
+  const signedUrls: { signedUrl: string | null }[] = [];
+  const signingBatchSize = 100;
+  for (let offset = 0; offset < validPaths.length; offset += signingBatchSize) {
+    const batch = validPaths.slice(offset, offset + signingBatchSize);
+    const { data, error } = await client.storage.from(bucketName).createSignedUrls(batch, 3600);
+    if (error) throw new Error(error.message);
+    if (!data || data.length !== batch.length) throw new Error('Could not create secure links for every drawing.');
+    signedUrls.push(...data);
+  }
 
   return records.map((row, index) => {
     const signedUrl = signedUrls[index]?.signedUrl;
@@ -144,6 +155,13 @@ export async function loadDrawings(): Promise<Drawing[]> {
   });
 }
 
+export async function downloadDrawing(storagePath: string): Promise<Blob> {
+  const client = requireSupabase();
+  const { data, error } = await client.storage.from(bucketName).download(storagePath);
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function revealPrompt(day: number): Promise<string> {
   const client = requireSupabase();
   const { data, error } = await client.rpc('reveal_prompt', { requested_day: day });
@@ -152,7 +170,7 @@ export async function revealPrompt(day: number): Promise<string> {
   return data;
 }
 
-export async function saveDrawing(file: File, participantId: string, day: number, previousPath?: string): Promise<string | null> {
+export async function saveDrawing(file: File, participantId: string, day: number): Promise<void> {
   if (!allowedImageTypes.has(file.type)) throw new Error('Choose a PNG, JPEG, WebP, or GIF image.');
   if (file.size > maxUploadBytes) throw new Error('Drawings must be 10 MB or smaller.');
 
@@ -166,22 +184,18 @@ export async function saveDrawing(file: File, participantId: string, day: number
   if (uploadError) throw new Error(uploadError.message);
 
   const name = file.name.replace(/\.[^.]+$/, '') || 'Untitled drawing';
-  const { error: saveError } = await client.from('drawings').upsert({
+  const { error: saveError } = await client.from('drawings').insert({
     participant_id: participantId,
     day,
     name,
     storage_path: path,
-  }, { onConflict: 'participant_id,day' });
+  });
 
   if (saveError) {
     const { error: cleanupError } = await client.storage.from(bucketName).remove([path]);
     const cleanupNote = cleanupError ? ` The uploaded file could not be cleaned up: ${cleanupError.message}` : '';
     throw new Error(`${saveError.message}${cleanupNote}`);
   }
-
-  if (!previousPath || previousPath === path) return null;
-  const { error: removeError } = await client.storage.from(bucketName).remove([previousPath]);
-  return removeError ? `Drawing saved, but the replaced file could not be removed: ${removeError.message}` : null;
 }
 
 export function describeBackendError(error: unknown): string {
