@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { Calendar } from './components/Calendar';
@@ -53,6 +53,14 @@ export default function App() {
   const [showBook, setShowBook] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>('today');
   const fileInput = useRef<HTMLInputElement>(null);
+
+  useLayoutEffect(() => {
+    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+    const scrollToTop = () => window.scrollTo(0, 0);
+    scrollToTop();
+    window.addEventListener('pageshow', scrollToTop);
+    return () => window.removeEventListener('pageshow', scrollToTop);
+  }, []);
 
   const refreshChallenge = useCallback(async (showLoading = true) => {
     if (showLoading) setDashboardLoading(true);
