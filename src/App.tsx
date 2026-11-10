@@ -139,6 +139,7 @@ export default function App() {
   const selectMobileTab = (tab: MobileTab) => {
     setMobileTab(tab);
     setShowBook(tab === 'sketchbook');
+    window.requestAnimationFrame(() => window.scrollTo(0, 0));
   };
 
   const continueFromProfile = async () => {
