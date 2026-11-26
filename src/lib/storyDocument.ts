@@ -6,7 +6,11 @@ export interface StoryBlock {
   style: StoryBlockStyle;
   bold: boolean;
   italic: boolean;
+  marks?: StoryTextMark[];
 }
+
+export interface StoryTextMark { start: number; end: number; bold: boolean; italic: boolean }
+export interface StoryTextSegment { text: string; bold: boolean; italic: boolean }
 
 export interface StoryPage {
   id: string;
@@ -30,6 +34,76 @@ export function newStoryId(): string {
 
 export function newStoryBlock(text = '', style: StoryBlockStyle = 'normal'): StoryBlock {
   return { id: newStoryId(), text, style, bold: false, italic: false };
+}
+
+export function getStoryTextSegments(block: StoryBlock): StoryTextSegment[] {
+  if (!block.text) return [];
+  const points = new Set([0, block.text.length]);
+  for (const mark of block.marks ?? []) { points.add(Math.max(0, Math.min(block.text.length, mark.start))); points.add(Math.max(0, Math.min(block.text.length, mark.end))); }
+  const sorted = [...points].sort((a, b) => a - b);
+  const segments: StoryTextSegment[] = [];
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const start = sorted[i]; const end = sorted[i + 1];
+    if (start === undefined || end === undefined || end <= start) continue;
+    const mark = (block.marks ?? []).find((item) => item.start <= start && item.end >= end);
+    const segment = { text: block.text.slice(start, end), bold: mark?.bold ?? block.bold, italic: mark?.italic ?? block.italic };
+    const previous = segments.at(-1);
+    if (previous && previous.bold === segment.bold && previous.italic === segment.italic) previous.text += segment.text;
+    else segments.push(segment);
+  }
+  return segments;
+}
+
+export function formatStoryBlock(block: StoryBlock, start: number, end: number, format: 'bold' | 'italic'): StoryBlock {
+  const from = Math.max(0, Math.min(block.text.length, start)); const to = Math.max(from, Math.min(block.text.length, end));
+  if (to <= from) return block;
+  const points = new Set([0, block.text.length, from, to]);
+  for (const mark of block.marks ?? []) { points.add(mark.start); points.add(mark.end); }
+  const sorted = [...points].sort((a, b) => a - b);
+  const segments: StoryTextMark[] = [];
+  const selectedSegments = sorted.slice(0, -1).map((segmentStart, index) => {
+    const segmentEnd = sorted[index + 1] ?? segmentStart;
+    const oldMark = (block.marks ?? []).find((mark) => mark.start <= segmentStart && mark.end >= segmentEnd);
+    return { start: segmentStart, end: segmentEnd, bold: oldMark?.bold ?? block.bold, italic: oldMark?.italic ?? block.italic, selected: segmentStart >= from && segmentEnd <= to };
+  });
+  const shouldEnable = selectedSegments.some((segment) => segment.selected && !segment[format]);
+  for (const segment of selectedSegments) {
+    const value = { bold: segment.bold, italic: segment.italic };
+    if (segment.selected) value[format] = shouldEnable;
+    if (value.bold === block.bold && value.italic === block.italic) continue;
+    const previous = segments.at(-1);
+    if (previous && previous.end === segment.start && previous.bold === value.bold && previous.italic === value.italic) previous.end = segment.end;
+    else segments.push({ start: segment.start, end: segment.end, ...value });
+  }
+  return { ...block, marks: segments };
+}
+
+export function isStoryRangeFormatted(block: StoryBlock, start: number, end: number, format: 'bold' | 'italic'): boolean {
+  const from = Math.max(0, Math.min(block.text.length, start)); const to = Math.max(from, Math.min(block.text.length, end));
+  if (to <= from) return false;
+  const points = new Set([from, to]);
+  for (const mark of block.marks ?? []) { if (mark.start > from && mark.start < to) points.add(mark.start); if (mark.end > from && mark.end < to) points.add(mark.end); }
+  const sorted = [...points].sort((a, b) => a - b);
+  return sorted.slice(0, -1).every((segmentStart, index) => {
+    const segmentEnd = sorted[index + 1] ?? segmentStart;
+    const mark = (block.marks ?? []).find((item) => item.start <= segmentStart && item.end >= segmentEnd);
+    return mark?.[format] ?? block[format];
+  });
+}
+
+export function adjustStoryBlockText(block: StoryBlock, text: string): StoryBlock {
+  if (!block.marks?.length || text === block.text) return { ...block, text };
+  let prefix = 0;
+  while (prefix < block.text.length && prefix < text.length && block.text[prefix] === text[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < block.text.length - prefix && suffix < text.length - prefix && block.text[block.text.length - 1 - suffix] === text[text.length - 1 - suffix]) suffix += 1;
+  const oldEnd = block.text.length - suffix; const newEnd = text.length - suffix; const delta = newEnd - oldEnd;
+  const marks: StoryTextMark[] = [];
+  for (const mark of block.marks) {
+    if (mark.start < prefix) marks.push({ ...mark, end: Math.min(mark.end, prefix) });
+    if (mark.end > oldEnd) marks.push({ ...mark, start: Math.max(mark.start, oldEnd) + delta, end: mark.end + delta });
+  }
+  return { ...block, text, marks: marks.filter((mark) => mark.end > mark.start).sort((a, b) => a.start - b.start) };
 }
 
 export function newStoryPage(text = ''): StoryPage {
@@ -69,6 +143,7 @@ export function parseStoryDocument(value: string): StoryDocument {
                 style: isStoryBlockStyle(block.style) ? block.style : 'normal',
                 bold: block.bold === true,
                 italic: block.italic === true,
+                marks: Array.isArray(block.marks) ? block.marks.filter((mark): mark is StoryTextMark => typeof mark === 'object' && mark !== null && typeof mark.start === 'number' && typeof mark.end === 'number' && typeof mark.bold === 'boolean' && typeof mark.italic === 'boolean') : [],
               }];
             });
             return [{ id: typeof rawPage.id === 'string' ? rawPage.id : newStoryId(), blocks: blocks.length ? blocks : [newStoryBlock()] }];

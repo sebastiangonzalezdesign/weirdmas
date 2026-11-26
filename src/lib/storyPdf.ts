@@ -1,5 +1,5 @@
 import type { PDFFont } from 'pdf-lib';
-import { newStoryId, type StoryBlock, type StoryDocument, type StoryPage, type StoryBlockStyle } from './storyDocument';
+import { getStoryTextSegments, newStoryId, type StoryBlock, type StoryDocument, type StoryPage, type StoryBlockStyle, type StoryTextMark } from './storyDocument';
 
 const pageWidth = 595.28;
 const pageHeight = 841.89;
@@ -10,12 +10,13 @@ const fontSizeByStyle: Record<StoryBlockStyle, number> = { normal: 11.5, h1: 23,
 
 type Font = PDFFont;
 type Fonts = { normal: Font; bold: Font; italic: Font; boldItalic: Font };
+type TextRun = { text: string; bold: boolean; italic: boolean };
+type TextLine = { runs: TextRun[] };
 
-function blockFont(block: StoryBlock, fonts: Fonts): Font {
-  const bold = block.bold || block.style !== 'normal';
-  if (bold && block.italic) return fonts.boldItalic;
+function flagsFont(bold: boolean, italic: boolean, fonts: Fonts): Font {
+  if (bold && italic) return fonts.boldItalic;
   if (bold) return fonts.bold;
-  if (block.italic) return fonts.italic;
+  if (italic) return fonts.italic;
   return fonts.normal;
 }
 
@@ -23,49 +24,69 @@ function pdfText(value: string): string {
   return value.normalize('NFC').replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '?');
 }
 
-function wrapLine(value: string, font: Font, size: number, width: number): string[] {
-  const lines: string[] = [];
-  let line = '';
-  for (const word of pdfText(value).split(/\s+/).filter(Boolean)) {
-    if (font.widthOfTextAtSize(word, size) > width) {
-      if (line) { lines.push(line); line = ''; }
-      let fragment = '';
-      for (const character of word) {
-        if (fragment && font.widthOfTextAtSize(fragment + character, size) > width) {
-          lines.push(fragment);
-          fragment = character;
-        } else fragment += character;
-      }
-      line = fragment;
-      continue;
-    }
-    const candidate = line ? `${line} ${word}` : word;
-    if (font.widthOfTextAtSize(candidate, size) <= width) line = candidate;
-    else { if (line) lines.push(line); line = word; }
+function blockLines(block: StoryBlock, fonts: Fonts): TextLine[] {
+  const size = fontSizeByStyle[block.style]; const width = pageWidth - margin * 2;
+  const source = pdfText(block.text);
+  const segments = getStoryTextSegments({ ...block, text: source });
+  const chars: { value: string; bold: boolean; italic: boolean }[] = [];
+  for (const segment of segments) for (const value of segment.text) chars.push({ value, bold: segment.bold || block.style !== 'normal', italic: segment.italic });
+  const lines: TextLine[] = [];
+  let current: TextRun[] = [];
+  const currentWidth = () => current.reduce((sum, run) => sum + flagsFont(run.bold, run.italic, fonts).widthOfTextAtSize(run.text, size), 0);
+  const append = (value: string, bold: boolean, italic: boolean) => {
+    const last = current.at(-1);
+    if (last && last.bold === bold && last.italic === italic) last.text += value;
+    else current.push({ text: value, bold, italic });
+  };
+  const flush = () => { while (current.length && /^\s+$/.test(current.at(-1)?.text ?? '')) current.pop(); lines.push({ runs: current }); current = []; };
+  let index = 0;
+  while (index < chars.length) {
+    const char = chars[index]; if (!char) { index += 1; continue; }
+    if (char.value === '\n') { flush(); index += 1; continue; }
+    if (/\s/.test(char.value)) { if (current.length && !/^\s+$/.test(current.at(-1)?.text ?? '')) append(' ', char.bold, char.italic); index += 1; continue; }
+    let end = index;
+    while (end < chars.length && chars[end] && !/\s/.test(chars[end]!.value)) end += 1;
+    const word = chars.slice(index, end);
+    const wordRuns: TextRun[] = [];
+    for (const item of word) { const last = wordRuns.at(-1); if (last && last.bold === item.bold && last.italic === item.italic) last.text += item.value; else wordRuns.push({ text: item.value, bold: item.bold, italic: item.italic }); }
+    const wordWidth = wordRuns.reduce((sum, run) => sum + flagsFont(run.bold, run.italic, fonts).widthOfTextAtSize(run.text, size), 0);
+    if (current.length && currentWidth() + wordWidth > width) flush();
+    if (wordWidth <= width) wordRuns.forEach((run) => append(run.text, run.bold, run.italic));
+    else for (const item of word) { const value = item.value; const before = currentWidth(); if (current.length && before + flagsFont(item.bold, item.italic, fonts).widthOfTextAtSize(value, size) > width) flush(); append(value, item.bold, item.italic); }
+    index = end;
   }
-  if (line) lines.push(line);
-  return lines.length ? lines : [''];
-}
-
-function getLines(block: StoryBlock, fonts: Fonts): string[] {
-  return block.text.replace(/\r\n/g, '\n').split('\n').flatMap((paragraph) => wrapLine(
-    paragraph,
-    blockFont(block, fonts),
-    fontSizeByStyle[block.style],
-    pageWidth - margin * 2,
-  ));
+  if (current.length || !lines.length) flush();
+  return lines;
 }
 
 function blockHeight(block: StoryBlock, lineCount: number): number {
   return lineCount * fontSizeByStyle[block.style] * 1.35 + (block.style === 'normal' ? 8 : 10);
 }
 
-function splitBlock(block: StoryBlock, lines: string[], maxHeight: number): [StoryBlock, StoryBlock | null] {
+function linesToBlock(block: StoryBlock, lines: TextLine[], id = block.id): StoryBlock {
+  const text = lines.map((line) => line.runs.map((run) => run.text).join('')).join('\n');
+  const marks: StoryTextMark[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    for (const run of line.runs) {
+      if (run.bold !== block.bold || run.italic !== block.italic) {
+        const previous = marks.at(-1);
+        if (previous && previous.end === offset && previous.bold === run.bold && previous.italic === run.italic) previous.end += run.text.length;
+        else marks.push({ start: offset, end: offset + run.text.length, bold: run.bold, italic: run.italic });
+      }
+      offset += run.text.length;
+    }
+    offset += 1;
+  }
+  return { ...block, id, text, marks };
+}
+
+function splitBlock(block: StoryBlock, lines: TextLine[], maxHeight: number): [StoryBlock, StoryBlock | null] {
   const lineHeight = fontSizeByStyle[block.style] * 1.35;
   const count = Math.max(1, Math.floor((maxHeight - 8) / lineHeight));
   return [
-    { ...block, text: lines.slice(0, count).join('\n') },
-    lines.length > count ? { ...block, id: newStoryId(), text: lines.slice(count).join('\n') } : null,
+    linesToBlock(block, lines.slice(0, count)),
+    lines.length > count ? linesToBlock(block, lines.slice(count), newStoryId()) : null,
   ];
 }
 
@@ -93,7 +114,7 @@ export async function paginateStoryDocument(document: StoryDocument): Promise<St
     const addBlock = (block: StoryBlock) => {
       let pending: StoryBlock | null = block;
       while (pending) {
-        const lines = getLines(pending, fonts);
+        const lines = blockLines(pending, fonts);
         const height = blockHeight(pending, lines.length);
         const maxHeight = bodyTop - footerTop;
         if (usedHeight + height <= maxHeight) {
@@ -196,10 +217,14 @@ export async function createStoryPdf(document: StoryDocument, cover?: File | nul
       }
       for (const block of storyPage.blocks) {
         const size = fontSizeByStyle[block.style];
-        const lines = getLines(block, fonts);
-        const font = blockFont(block, fonts);
+        const lines = blockLines(block, fonts);
         for (const line of lines) {
-          page.drawText(pdfText(line), { x: margin, y, size, font, color: rgb(0.12, 0.16, 0.19) });
+          let x = margin;
+          for (const run of line.runs) {
+            const font = flagsFont(run.bold || block.style !== 'normal', run.italic, fonts);
+            page.drawText(pdfText(run.text), { x, y, size, font, color: rgb(0.12, 0.16, 0.19) });
+            x += font.widthOfTextAtSize(pdfText(run.text), size);
+          }
           y -= size * 1.35;
         }
         y -= block.style === 'normal' ? 8 : 10;
