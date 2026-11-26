@@ -1,13 +1,13 @@
 import { Icon } from './Icon';
 import { formatChallengeDate } from '../lib/challenge';
 
-interface Props { selectedDay: number; onSelectDay: (day: number) => void; completedDays: number[]; activeDay: number | null; availableDays: number[] }
+interface Props { selectedDay: number; onSelectDay: (day: number) => void; completedDays: number[]; activeDay: number | null; availableDays: number[]; prelaunch?: boolean }
 const weekdays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
-export function Calendar({ selectedDay, onSelectDay, completedDays, activeDay, availableDays }: Props) {
+export function Calendar({ selectedDay, onSelectDay, completedDays, activeDay, availableDays, prelaunch = false }: Props) {
   return <section className="glass-panel calendar-panel" aria-labelledby="calendar-title">
     <div className="section-heading"><div><span className="eyebrow">THE CHALLENGE</span><h2 id="calendar-title">December <span>2026</span></h2></div><span className="calendar-icon"><Icon name="calendar" /></span></div>
-    <p className="panel-copy">Add a new page to your story each day.</p>
+    <p className="panel-copy">{prelaunch ? 'The calendar opens on December 1. You can test image and story uploads above.' : 'Upload an image to complete each day and unlock the next date.'}</p>
     <div className="calendar-grid calendar-grid--week" aria-hidden="true">{weekdays.map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
     <div className="calendar-grid" role="group" aria-label="December 2026 challenge days">
       {Array.from({ length: 31 }, (_, index) => {

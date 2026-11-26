@@ -6,26 +6,26 @@ import { Gallery, type Drawing } from './components/Gallery';
 import { Icon } from './components/Icon';
 import { MobileBottomNav, type MobileTab } from './components/MobileBottomNav';
 import { ParticipantPicker } from './components/ParticipantPicker';
-import { StoryEntryCard } from './components/StoryEntryCard';
 import { StorySubmissionDialog } from './components/StorySubmissionDialog';
 import { SketchbookPage } from './components/SketchbookPage';
 import { UploadCard, type UploadFeedback } from './components/UploadCard';
 import { participants as initialParticipants } from './data/participants';
 import type { Participant } from './data/participants';
 import { supabase, supabaseConfigurationError } from './lib/supabase';
-import { currentChallengeDay } from './lib/challenge';
+import { challengeStartsAt, currentChallengeDay, isChallengeLaunched } from './lib/challenge';
 import {
   bindParticipant,
   describeBackendError,
   loadChallengeState,
   loadDrawings,
   loadParticipants,
-  hasStorySubmission,
+  loadStorySubmission,
   loadPromptAssignments,
   loadStoryEntries,
+  resetPrelaunchDrawings,
   saveDrawing,
-  saveStoryEntry,
   type StoryEntry,
+  type StoryDraft,
   type ChallengeState,
   type PromptAssignment,
 } from './lib/supabaseApi';
@@ -49,13 +49,11 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [storyEntries, setStoryEntries] = useState<StoryEntry[]>([]);
-  const [storyEntriesAvailable, setStoryEntriesAvailable] = useState(true);
+  const [legacyStoryEntries, setLegacyStoryEntries] = useState<StoryEntry[]>([]);
+  const [storyDraft, setStoryDraft] = useState<StoryDraft | null>(null);
   const [storySubmissionAvailable, setStorySubmissionAvailable] = useState(true);
-  const [isSavingStory, setIsSavingStory] = useState(false);
   const [showStoryDialog, setShowStoryDialog] = useState(false);
-  const [storySubmitted, setStorySubmitted] = useState(false);
-  const [storyCountdown, setStoryCountdown] = useState('');
+  const [challengeCountdown, setChallengeCountdown] = useState('');
   const [, setClockTick] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
@@ -63,6 +61,7 @@ export default function App() {
   const [showBook, setShowBook] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>('today');
   const fileInput = useRef<HTMLInputElement>(null);
+  const launchResetRequested = useRef(false);
 
   useLayoutEffect(() => {
     if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
@@ -75,13 +74,14 @@ export default function App() {
   const refreshChallenge = useCallback(async (showLoading = true) => {
     if (showLoading) setDashboardLoading(true);
     try {
+      if (isChallengeLaunched()) await resetPrelaunchDrawings();
       const state = await loadChallengeState();
       if (!state) {
         setChallengeState(null);
         setDrawings([]);
         setPromptAssignments([]);
-        setStoryEntries([]);
-        setStoryEntriesAvailable(true);
+        setLegacyStoryEntries([]);
+        setStoryDraft(null);
         setStorySubmissionAvailable(true);
         setChallengeLoaded(true);
         return;
@@ -99,15 +99,10 @@ export default function App() {
       setChallengeLoaded(true);
       setErrorMessage('');
 
-      const [storiesResult, submissionResult] = await Promise.allSettled([loadStoryEntries(), hasStorySubmission()]);
-      if (storiesResult.status === 'fulfilled') {
-        setStoryEntries(storiesResult.value);
-        setStoryEntriesAvailable(true);
-      } else {
-        setStoryEntriesAvailable(false);
-      }
+      const [legacyStoriesResult, submissionResult] = await Promise.allSettled([loadStoryEntries(), loadStorySubmission()]);
+      if (legacyStoriesResult.status === 'fulfilled') setLegacyStoryEntries(legacyStoriesResult.value);
       if (submissionResult.status === 'fulfilled') {
-        setStorySubmitted(submissionResult.value);
+        setStoryDraft(submissionResult.value);
         setStorySubmissionAvailable(true);
       } else {
         setStorySubmissionAvailable(false);
@@ -159,11 +154,13 @@ export default function App() {
   const participant = participants.find((person) => person.id === participantId) ?? participants[0];
   const completedDays = challengeState?.completedDays ?? noCompletedDays;
   const activeDay = challengeState?.activeDay ?? null;
-  const storyEntry = storyEntries.find((entry) => entry.day === selectedDay)?.content ?? '';
-  const canUploadSelectedDay = Boolean(challengeState && !challengeState.sharedReveal && (selectedDay === activeDay || completedDays.includes(selectedDay)));
-  const currentDay = currentChallengeDay();
-  const canEditStoryDay = Boolean(challengeState && selectedDay <= currentDay);
-  const availableDays = useMemo(() => Array.from({ length: currentDay }, (_, index) => index + 1).concat(completedDays), [currentDay, completedDays]);
+  const now = new Date();
+  const prelaunch = !isChallengeLaunched(now);
+  const canUploadSelectedDay = Boolean(challengeState && (prelaunch || (!challengeState.sharedReveal && (selectedDay === activeDay || completedDays.includes(selectedDay)))));
+  const currentDay = currentChallengeDay(now);
+  const canManageStory = Boolean(challengeState && (prelaunch || completedDays.length >= 31));
+  const calendarCompletedDays = prelaunch ? noCompletedDays : completedDays;
+  const availableDays = useMemo(() => Array.from({ length: currentDay }, (_, index) => index + 1).concat(calendarCompletedDays), [currentDay, calendarCompletedDays]);
 
   const selectMobileTab = (tab: MobileTab) => {
     setMobileTab(tab);
@@ -283,9 +280,8 @@ export default function App() {
     setChallengeLoaded(false);
     setDrawings([]);
     setPromptAssignments([]);
-    setStoryEntries([]);
-    setStorySubmitted(false);
-    setStoryEntriesAvailable(true);
+    setLegacyStoryEntries([]);
+    setStoryDraft(null);
     setStorySubmissionAvailable(true);
     setSelectedDay(1);
     setShowBook(false);
@@ -300,23 +296,23 @@ export default function App() {
   useEffect(() => {
     const update = () => {
       setClockTick(Date.now());
-      const target = new Date('2026-12-01T00:00:00-05:00').getTime();
+      const target = challengeStartsAt.getTime();
       const remaining = target - Date.now();
-      if (remaining <= 0) { setStoryCountdown(''); return; }
+      if (remaining <= 0) {
+        setChallengeCountdown('');
+        if (!launchResetRequested.current) {
+          launchResetRequested.current = true;
+          void refreshChallenge(false).catch((error: unknown) => setErrorMessage(describeBackendError(error)));
+        }
+        return;
+      }
       const days = Math.floor(remaining / 86400000);
       const hours = Math.floor((remaining % 86400000) / 3600000);
       const minutes = Math.floor((remaining % 3600000) / 60000);
-      setStoryCountdown(`${days}d ${hours}h ${minutes}m`);
+      setChallengeCountdown(`${days}d ${hours}h ${minutes}m`);
     };
     update(); const timer = window.setInterval(update, 60000); return () => window.clearInterval(timer);
-  }, []);
-
-  const saveDailyStory = async (content: string) => {
-    setIsSavingStory(true); setErrorMessage(''); setNotice('');
-    try { await saveStoryEntry(participantId, selectedDay, content); setStoryEntries((current) => [...current.filter((entry) => entry.day !== selectedDay), { day: selectedDay, content }]); setNotice(`Day ${selectedDay} story saved.`); }
-    catch (error: unknown) { setErrorMessage(describeBackendError(error)); }
-    finally { setIsSavingStory(false); }
-  };
+  }, [refreshChallenge]);
 
   const uploadDrawing = () => fileInput.current?.click();
 
@@ -451,6 +447,10 @@ export default function App() {
         <button className="button button--secondary dashboard-reset" type="button" onClick={() => { void signOut(); }}>Sign out</button>
       </header>
       <div className={`dashboard dashboard--${mobileTab}`}>
+        <section className="challenge-launch-banner" aria-live="polite">
+          <div><span className="eyebrow">{prelaunch ? 'PRELAUNCH · TEST YOUR SKETCHBOOK' : 'DECEMBER 2026 CHALLENGE'}</span><h2>{prelaunch ? 'The challenge begins December 1' : 'The challenge is live'}</h2>{prelaunch && <p>Starts at 6:00 am Bogotá time. You can test any day before then.</p>}</div>
+          <div className="challenge-launch-banner__right">{prelaunch ? <strong className="story-countdown">{challengeCountdown || 'Starting soon'}</strong> : <span>One image unlocks the next day.</span>}</div>
+        </section>
         <section className="dashboard-intro">
           <div className="profile-day"><span className="profile-day-avatar" aria-hidden="true"><span className="avatar-fallback">{participant.name[0]}</span><img src={participant.avatarPath} alt="" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.parentElement?.classList.add('has-avatar-fallback'); }}/></span><div><span className="profile-date">{participant.role}</span><h1>Day {selectedDay} <em>Hi {participant.name}</em></h1></div></div>
           <div className="dashboard-brand"><img className="dashboard-mascot" src="/assets/illustrations/cover.png" alt="" /><div className="brand-wordmark-row"><img className="brand-decoration brand-decoration--left" src="/assets/illustrations/decoration-left.svg" alt="" /><span className="wordmark">Weirdmas</span><img className="brand-decoration brand-decoration--right" src="/assets/illustrations/decoration-right.svg" alt="" /></div><span className="brand-caption">DAILY STORYBOOK</span></div>
@@ -461,19 +461,18 @@ export default function App() {
         {challengeState.sharedReveal && <p className="form-message form-message--success dashboard-message" role="status">Both sketchbooks are complete. Shared drawings are now open.</p>}
         <div className="dashboard-grid">
           <div className="dashboard-column dashboard-column--left">
-            <Calendar selectedDay={selectedDay} onSelectDay={(day) => { setSelectedDay(day); setErrorMessage(''); setNotice(''); setUploadFeedback(null); selectMobileTab('today'); }} completedDays={completedDays} activeDay={activeDay} availableDays={availableDays}/>
+            <Calendar selectedDay={selectedDay} onSelectDay={(day) => { setSelectedDay(day); setErrorMessage(''); setNotice(''); setUploadFeedback(null); selectMobileTab('today'); }} completedDays={calendarCompletedDays} activeDay={prelaunch ? null : activeDay} availableDays={availableDays} prelaunch={prelaunch}/>
             <Gallery drawings={drawings} participants={participants} activeDay={selectedDay} sharedReveal={challengeState.sharedReveal} onOpen={() => selectMobileTab('sketchbook')}/>
           </div>
           <div className="dashboard-column dashboard-column--right">
-            <StoryEntryCard day={selectedDay} initialValue={storyEntry} available={storyEntriesAvailable} disabled={!storyEntriesAvailable || !canEditStoryDay} saving={isSavingStory} onSave={(content) => { void saveDailyStory(content); }}/>
-            <UploadCard onUpload={uploadDrawing} disabled={!canUploadSelectedDay || isSaving || dashboardLoading} saving={isSaving} feedback={uploadFeedback}/>
-            <section className="glass-panel story-upload-card"><span className="eyebrow">THE FINISHED STORY</span><h2>Upload your written story</h2>{!storySubmissionAvailable ? <p>Story uploads are temporarily unavailable. Your sketchbook is still ready to use.</p> : storySubmitted ? <p>Your story is uploaded to your private sketchbook.</p> : storyCountdown ? <><p>Available December 1</p><strong className="story-countdown" aria-live="off">{storyCountdown}</strong></> : <><p>Combine your daily pages, paste text or choose a text file, and add an optional cover.</p><button className="button button--primary" type="button" onClick={() => setShowStoryDialog(true)}>Prepare story upload</button></>}</section>
+            <UploadCard onUpload={uploadDrawing} prelaunch={prelaunch} disabled={!canUploadSelectedDay || isSaving || dashboardLoading} saving={isSaving} feedback={uploadFeedback}/>
+            <section className="glass-panel story-upload-card"><span className="eyebrow">YOUR WRITTEN STORY</span><h2>Save and make a story PDF</h2>{!storySubmissionAvailable ? <p>Story drafts are temporarily unavailable. Your image sketchbook is still ready to use.</p> : !canManageStory ? <><p>Finish the 31 daily image pages to unlock your story draft and PDF.</p><strong className="story-progress">{completedDays.length} of 31 days complete</strong></> : <><p>A single full story is saved as a draft. Replace it whenever you like, add an optional cover, and download a PDF.</p><button className="button button--secondary" type="button" onClick={() => setShowStoryDialog(true)}>{storyDraft ? 'Edit story and create PDF' : 'Add story and create PDF'}</button></>}</section>
           </div>
         </div>
         <footer className="footer-note"><span>PRIVATE DRAWINGS · SHARED AFTER BOTH FINISH</span><span>6:00 am Bogotá time <i/> {participants.length} artists <i/> all kinds of weird</span></footer>
       </div>
       <input ref={fileInput} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={!canUploadSelectedDay || isSaving} onChange={(event) => { void handleFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }}/>
-      {showStoryDialog && <StorySubmissionDialog initialContent={storyEntries.slice().sort((a, b) => a.day - b.day).map((entry) => `Day ${entry.day}\n${entry.content}`).join('\n\n')} onClose={() => setShowStoryDialog(false)} onSubmitted={() => { setShowStoryDialog(false); setStorySubmitted(true); setNotice('Your story was uploaded.'); }}/ >}
+      {showStoryDialog && <StorySubmissionDialog initialContent={storyDraft?.content ?? legacyStoryEntries.slice().sort((a, b) => a.day - b.day).map((entry) => `Day ${entry.day}\n${entry.content}`).join('\n\n')} initialCover={storyDraft?.cover} onClose={() => setShowStoryDialog(false)} onSubmitted={(content, cover) => { setStoryDraft({ content, cover }); setNotice('Story draft saved. You can replace it whenever you like.'); }}/ >}
     </main>
     <MobileBottomNav activeTab={mobileTab} onSelect={selectMobileTab} />
   </>;

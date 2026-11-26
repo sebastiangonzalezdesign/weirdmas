@@ -14,6 +14,7 @@ export interface ChallengeState {
 }
 
 export interface StoryEntry { day: number; content: string; }
+export interface StoryDraft { content: string; cover: File | null; }
 
 export interface PromptAssignment {
   day: number;
@@ -81,6 +82,12 @@ export async function loadChallengeState(): Promise<ChallengeState | null> {
   };
 }
 
+export async function resetPrelaunchDrawings(): Promise<void> {
+  const client = requireSupabase();
+  const { error } = await client.rpc('reset_prelaunch_drawings');
+  if (error) throw new Error(error.message);
+}
+
 export async function loadStoryEntries(): Promise<StoryEntry[]> {
   const client = requireSupabase();
   const { data, error } = await client.from('story_entries').select('day,content').order('day');
@@ -88,23 +95,29 @@ export async function loadStoryEntries(): Promise<StoryEntry[]> {
   return (data ?? []).filter((row): row is { day: number; content: string } => typeof row.day === 'number' && typeof row.content === 'string');
 }
 
-export async function hasStorySubmission(): Promise<boolean> {
+export async function loadStorySubmission(): Promise<StoryDraft | null> {
   const client = requireSupabase();
-  const { data, error } = await client.from('story_submissions').select('id').limit(1);
+  const { data, error } = await client.from('story_submissions').select('id,text_path,cover_path').order('uploaded_at', { ascending: false }).limit(1).maybeSingle();
   if (error) throw new Error(error.message);
-  return Boolean(data?.length);
-}
-
-export async function saveStoryEntry(participantId: string, day: number, content: string): Promise<void> {
-  const client = requireSupabase();
-  const { error } = await client.from('story_entries').upsert({ participant_id: participantId, day, content }, { onConflict: 'participant_id,day' });
-  if (error) throw new Error(error.message);
+  if (!data || typeof data.text_path !== 'string') return null;
+  const { data: textBlob, error: textError } = await client.storage.from('weirdmas-stories').download(data.text_path);
+  if (textError) throw new Error(textError.message);
+  let cover: File | null = null;
+  if (typeof data.cover_path === 'string') {
+    const { data: coverBlob, error: coverError } = await client.storage.from('weirdmas-stories').download(data.cover_path);
+    if (coverError) throw new Error(coverError.message);
+    const extension = data.cover_path.split('.').at(-1) ?? 'jpg';
+    cover = new File([coverBlob], `story-cover.${extension}`, { type: coverBlob.type || 'image/jpeg' });
+  }
+  return { content: await textBlob.text(), cover };
 }
 
 export async function submitStory(content: string, cover?: File): Promise<void> {
   const client = requireSupabase();
   const participantId = (await loadChallengeState())?.participantId;
   if (!participantId) throw new Error('Sign in to upload your story.');
+  const { data: existing, error: lookupError } = await client.from('story_submissions').select('id,text_path,cover_path').order('uploaded_at', { ascending: false }).limit(1).maybeSingle();
+  if (lookupError) throw new Error(lookupError.message);
   const base = `${participantId}/story/${crypto.randomUUID()}`;
   const textPath = `${base}.txt`;
   const { error: textError } = await client.storage.from('weirdmas-stories').upload(textPath, new Blob([content], { type: 'text/plain' }), { contentType: 'text/plain' });
@@ -118,11 +131,16 @@ export async function submitStory(content: string, cover?: File): Promise<void> 
       throw new Error(error.message);
     }
   }
-  const { error } = await client.from('story_submissions').insert({ participant_id: participantId, text_path: textPath, cover_path: coverPath });
+  const result = existing
+    ? await client.from('story_submissions').update({ text_path: textPath, cover_path: coverPath, uploaded_at: new Date().toISOString() }).eq('id', existing.id).select('id').single()
+    : await client.from('story_submissions').insert({ participant_id: participantId, text_path: textPath, cover_path: coverPath });
+  const { error } = result;
   if (error) {
     await client.storage.from('weirdmas-stories').remove([textPath, ...(coverPath ? [coverPath] : [])]);
     throw new Error(error.message);
   }
+  const oldPaths = [existing?.text_path, existing?.cover_path].filter((path): path is string => typeof path === 'string');
+  if (oldPaths.length) await client.storage.from('weirdmas-stories').remove(oldPaths);
 }
 
 export async function loadPromptAssignments(): Promise<PromptAssignment[]> {
