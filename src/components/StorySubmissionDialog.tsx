@@ -50,7 +50,7 @@ export function StorySubmissionDialog({ initialContent, initialCover = null, onC
         <button className="button button--secondary story-add-page" type="button" onClick={() => update((cs) => [...cs, newStoryChapter(`Chapter ${cs.length + 1}`)])}>Add chapter</button>
       </div>}
       {!layoutBusy && mode === 'preview' && <div className="story-preview-list">
-        {coverUrl && <article className="story-paper story-paper--cover"><img src={coverUrl} alt="Story cover preview" /><footer>{String(++printedPage).padStart(2, '0')}</footer></article>}
+        {coverUrl && <article className="story-paper story-paper--cover"><img src={coverUrl} alt="Story cover preview" /></article>}
         {chapters.map((chapter) => chapter.pages.map((page) => { printedPage += 1; return <article className="story-paper" key={page.id}><div className="story-paper__body">{page.chapterTitle?.trim() && <h2>{page.chapterTitle}</h2>}{page.blocks.map((block) => { const Tag = block.style === 'normal' ? 'p' : block.style; return <Tag key={block.id}>{getStoryTextSegments(block).map((segment, index) => <span key={index} className={`${segment.bold ? 'is-bold ' : ''}${segment.italic ? 'is-italic' : ''}`}>{segment.text}</span>)}</Tag>; })}</div><footer>{String(printedPage).padStart(2, '0')}</footer><div className="story-paper__controls"><button type="button" onClick={() => { setMode('write'); }}>Edit page</button></div></article>; }))}
       </div>}
       {saved && <p className="sketchbook-export-status" role="status">Story draft saved. You can replace it any time.</p>}{error && <p className="sketchbook-export-error" role="alert">{error}</p>}

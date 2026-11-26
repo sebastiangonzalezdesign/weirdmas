@@ -202,8 +202,6 @@ export async function createStoryPdf(document: StoryDocument, cover?: File | nul
     const width = image.width * scale;
     const height = image.height * scale;
     page.drawImage(image, { x: frame.x + (frame.width - width) / 2, y: frame.y + (frame.height - height) / 2, width, height });
-    pageNumber += 1;
-    drawPageNumber(page);
   }
 
   for (const chapter of document) {
