@@ -7,7 +7,7 @@ const weekdays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 export function Calendar({ selectedDay, onSelectDay, completedDays, activeDay, availableDays }: Props) {
   return <section className="glass-panel calendar-panel" aria-labelledby="calendar-title">
     <div className="section-heading"><div><span className="eyebrow">THE CHALLENGE</span><h2 id="calendar-title">December <span>2026</span></h2></div><span className="calendar-icon"><Icon name="calendar" /></span></div>
-    <p className="panel-copy">A new prompt unlocks every day at 6:00 am.</p>
+    <p className="panel-copy">Add a new page to your story each day.</p>
     <div className="calendar-grid calendar-grid--week" aria-hidden="true">{weekdays.map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
     <div className="calendar-grid" role="group" aria-label="December 2026 challenge days">
       {Array.from({ length: 31 }, (_, index) => {

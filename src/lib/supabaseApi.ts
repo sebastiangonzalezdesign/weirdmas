@@ -11,8 +11,9 @@ export interface ChallengeState {
   activeDay: number | null;
   completedDays: number[];
   sharedReveal: boolean;
-  testMode: boolean;
 }
+
+export interface StoryEntry { day: number; content: string; }
 
 export interface PromptAssignment {
   day: number;
@@ -63,12 +64,8 @@ export async function bindParticipant(participantId: string, claimCode: string):
 
 export async function loadChallengeState(): Promise<ChallengeState | null> {
   const client = requireSupabase();
-  const [{ data, error }, { data: testMode, error: testModeError }] = await Promise.all([
-    client.rpc('my_challenge_state'),
-    client.rpc('is_test_mode'),
-  ]);
+  const { data, error } = await client.rpc('my_challenge_state');
   if (error) throw new Error(error.message);
-  if (testModeError) throw new Error(testModeError.message);
   const first: unknown = Array.isArray(data) ? data[0] : data;
   if (!isRecord(first) || typeof first.participant_id !== 'string') return null;
 
@@ -81,14 +78,51 @@ export async function loadChallengeState(): Promise<ChallengeState | null> {
     activeDay,
     completedDays,
     sharedReveal: first.shared_reveal === true,
-    testMode: testMode === true,
   };
 }
 
-export async function resetTestChallenge(): Promise<void> {
+export async function loadStoryEntries(): Promise<StoryEntry[]> {
   const client = requireSupabase();
-  const { error } = await client.rpc('reset_test_challenge');
+  const { data, error } = await client.from('story_entries').select('day,content').order('day');
   if (error) throw new Error(error.message);
+  return (data ?? []).filter((row): row is { day: number; content: string } => typeof row.day === 'number' && typeof row.content === 'string');
+}
+
+export async function hasStorySubmission(): Promise<boolean> {
+  const client = requireSupabase();
+  const { data, error } = await client.from('story_submissions').select('id').limit(1);
+  if (error) throw new Error(error.message);
+  return Boolean(data?.length);
+}
+
+export async function saveStoryEntry(participantId: string, day: number, content: string): Promise<void> {
+  const client = requireSupabase();
+  const { error } = await client.from('story_entries').upsert({ participant_id: participantId, day, content }, { onConflict: 'participant_id,day' });
+  if (error) throw new Error(error.message);
+}
+
+export async function submitStory(content: string, cover?: File): Promise<void> {
+  const client = requireSupabase();
+  const participantId = (await loadChallengeState())?.participantId;
+  if (!participantId) throw new Error('Sign in to upload your story.');
+  const base = `${participantId}/story/${crypto.randomUUID()}`;
+  const textPath = `${base}.txt`;
+  const { error: textError } = await client.storage.from('weirdmas-stories').upload(textPath, new Blob([content], { type: 'text/plain' }), { contentType: 'text/plain' });
+  if (textError) throw new Error(textError.message);
+  let coverPath: string | null = null;
+  if (cover) {
+    coverPath = `${base}-cover-${cover.name.replace(/[^a-zA-Z0-9._-]+/g, '-')}`;
+    const { error } = await client.storage.from('weirdmas-stories').upload(coverPath, cover, { contentType: cover.type });
+    if (error) {
+      await client.storage.from('weirdmas-stories').remove([textPath]);
+      throw new Error(error.message);
+    }
+  }
+  const { error } = await client.from('story_submissions').insert({ participant_id: participantId, text_path: textPath, cover_path: coverPath });
+  if (error) {
+    await client.storage.from('weirdmas-stories').remove([textPath, ...(coverPath ? [coverPath] : [])]);
+    throw new Error(error.message);
+  }
 }
 
 export async function loadPromptAssignments(): Promise<PromptAssignment[]> {

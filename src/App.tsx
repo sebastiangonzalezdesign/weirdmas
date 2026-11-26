@@ -6,22 +6,26 @@ import { Gallery, type Drawing } from './components/Gallery';
 import { Icon } from './components/Icon';
 import { MobileBottomNav, type MobileTab } from './components/MobileBottomNav';
 import { ParticipantPicker } from './components/ParticipantPicker';
-import { PromptCard } from './components/PromptCard';
+import { StoryEntryCard } from './components/StoryEntryCard';
+import { StorySubmissionDialog } from './components/StorySubmissionDialog';
 import { SketchbookPage } from './components/SketchbookPage';
 import { UploadCard, type UploadFeedback } from './components/UploadCard';
 import { participants as initialParticipants } from './data/participants';
 import type { Participant } from './data/participants';
 import { supabase, supabaseConfigurationError } from './lib/supabase';
+import { currentChallengeDay } from './lib/challenge';
 import {
   bindParticipant,
   describeBackendError,
   loadChallengeState,
   loadDrawings,
   loadParticipants,
+  hasStorySubmission,
   loadPromptAssignments,
-  revealPrompt as requestPromptReveal,
-  resetTestChallenge,
+  loadStoryEntries,
   saveDrawing,
+  saveStoryEntry,
+  type StoryEntry,
   type ChallengeState,
   type PromptAssignment,
 } from './lib/supabaseApi';
@@ -45,8 +49,12 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isRevealing, setIsRevealing] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
+  const [storyEntries, setStoryEntries] = useState<StoryEntry[]>([]);
+  const [isSavingStory, setIsSavingStory] = useState(false);
+  const [showStoryDialog, setShowStoryDialog] = useState(false);
+  const [storySubmitted, setStorySubmitted] = useState(false);
+  const [storyCountdown, setStoryCountdown] = useState('');
+  const [, setClockTick] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
   const [uploadFeedback, setUploadFeedback] = useState<UploadFeedback | null>(null);
@@ -74,14 +82,18 @@ export default function App() {
         return;
       }
 
-      const [nextDrawings, nextAssignments] = await Promise.all([
+      const [nextDrawings, nextAssignments, nextStories, hasSubmittedStory] = await Promise.all([
         loadDrawings(),
         loadPromptAssignments(),
+        loadStoryEntries(),
+        hasStorySubmission(),
       ]);
       setChallengeState(state);
       setParticipantId(state.participantId);
       setDrawings(nextDrawings);
       setPromptAssignments(nextAssignments);
+      setStoryEntries(nextStories);
+      setStorySubmitted(hasSubmittedStory);
       setSelectedDay((current) => state.activeDay ?? (state.completedDays.includes(current) ? current : state.completedDays.at(-1) ?? 1));
       setChallengeLoaded(true);
       setErrorMessage('');
@@ -132,9 +144,11 @@ export default function App() {
   const participant = participants.find((person) => person.id === participantId) ?? participants[0];
   const completedDays = challengeState?.completedDays ?? noCompletedDays;
   const activeDay = challengeState?.activeDay ?? null;
-  const promptTitle = promptAssignments.find((assignment) => assignment.day === selectedDay)?.title;
-  const canEditSelectedDay = Boolean(challengeState && !challengeState.sharedReveal && (selectedDay === activeDay || completedDays.includes(selectedDay)));
-  const availableDays = useMemo(() => activeDay === null ? completedDays : [...completedDays, activeDay], [activeDay, completedDays]);
+  const storyEntry = storyEntries.find((entry) => entry.day === selectedDay)?.content ?? '';
+  const canUploadSelectedDay = Boolean(challengeState && !challengeState.sharedReveal && (selectedDay === activeDay || completedDays.includes(selectedDay)));
+  const currentDay = currentChallengeDay();
+  const canEditStoryDay = Boolean(challengeState && selectedDay <= currentDay);
+  const availableDays = useMemo(() => Array.from({ length: currentDay }, (_, index) => index + 1).concat(completedDays), [currentDay, completedDays]);
 
   const selectMobileTab = (tab: MobileTab) => {
     setMobileTab(tab);
@@ -254,6 +268,8 @@ export default function App() {
     setChallengeLoaded(false);
     setDrawings([]);
     setPromptAssignments([]);
+    setStoryEntries([]);
+    setStorySubmitted(false);
     setSelectedDay(1);
     setShowBook(false);
     setMobileTab('today');
@@ -264,45 +280,31 @@ export default function App() {
     setUploadFeedback(null);
   };
 
-  const revealSelectedPrompt = async () => {
-    setIsRevealing(true);
-    setErrorMessage('');
-    setNotice('');
-    try {
-      const title = await requestPromptReveal(selectedDay);
-      setPromptAssignments((current) => [...current.filter((assignment) => assignment.day !== selectedDay), { day: selectedDay, title }]);
-    } catch (error: unknown) {
-      setErrorMessage(describeBackendError(error));
-    } finally {
-      setIsRevealing(false);
-    }
-  };
+  useEffect(() => {
+    const update = () => {
+      setClockTick(Date.now());
+      const target = new Date('2026-12-01T00:00:00-05:00').getTime();
+      const remaining = target - Date.now();
+      if (remaining <= 0) { setStoryCountdown(''); return; }
+      const days = Math.floor(remaining / 86400000);
+      const hours = Math.floor((remaining % 86400000) / 3600000);
+      const minutes = Math.floor((remaining % 3600000) / 60000);
+      setStoryCountdown(`${days}d ${hours}h ${minutes}m`);
+    };
+    update(); const timer = window.setInterval(update, 60000); return () => window.clearInterval(timer);
+  }, []);
 
-  const resetTestProgress = async () => {
-    if (!challengeState?.testMode || participantId !== 'sebastian') return;
-    if (!window.confirm('Reset both test sketchbooks? All test drawings and revealed prompts will be deleted. Profile bindings and claim codes will stay.')) return;
-
-    setIsResetting(true);
-    setErrorMessage('');
-    setNotice('');
-    try {
-      await resetTestChallenge();
-      await refreshChallenge();
-      setSelectedDay(1);
-      setShowBook(false);
-      setMobileTab('today');
-      setNotice('Both test sketchbooks were reset.');
-    } catch (error: unknown) {
-      setErrorMessage(describeBackendError(error));
-    } finally {
-      setIsResetting(false);
-    }
+  const saveDailyStory = async (content: string) => {
+    setIsSavingStory(true); setErrorMessage(''); setNotice('');
+    try { await saveStoryEntry(participantId, selectedDay, content); setStoryEntries((current) => [...current.filter((entry) => entry.day !== selectedDay), { day: selectedDay, content }]); setNotice(`Day ${selectedDay} story saved.`); }
+    catch (error: unknown) { setErrorMessage(describeBackendError(error)); }
+    finally { setIsSavingStory(false); }
   };
 
   const uploadDrawing = () => fileInput.current?.click();
 
   const handleFiles = async (files: File[]) => {
-    if (files.length === 0 || !challengeState || !canEditSelectedDay) return;
+    if (files.length === 0 || !challengeState || !canUploadSelectedDay) return;
     const uploadDay = selectedDay;
     const uploadParticipantId = participantId;
     setIsSaving(true);
@@ -413,7 +415,7 @@ export default function App() {
       <div className="welcome-brand"><img className="welcome-mascot" src="/assets/illustrations/cover.png" alt="" /><div className="brand-wordmark-row"><img className="brand-decoration brand-decoration--left" src="/assets/illustrations/decoration-left.svg" alt="" /><a className="wordmark" href="#top" aria-label="Weirdmas home">Weirdmas<span>®</span></a><img className="brand-decoration brand-decoration--right" src="/assets/illustrations/decoration-right.svg" alt="" /></div></div>
       <span className="eyebrow welcome-kicker">A DECEMBER DRAWING RITUAL</span>
       <h1 className="welcome-title">{session ? authStage === 'claim-code' ? 'Claim your profile' : 'Choose your profile' : authStage === 'email' ? 'Your sketchbook awaits' : authStage === 'otp' ? 'One small step' : 'Select your avatar'}</h1>
-      <p className="welcome-description">Thirty-one days. One small prompt. A sketchbook that gets stranger together.</p>
+      <p className="welcome-description">Thirty-one days. One small page each day. A story that grows stranger together.</p>
       {supabaseConfigurationError && <p className="form-message form-message--error" role="alert">{supabaseConfigurationError}</p>}
       {errorMessage && !(session && !challengeLoaded) && <p className="form-message form-message--error" role="alert">{errorMessage}</p>}
       {notice && <p className="form-message form-message--success" role="status">{notice}</p>}
@@ -432,13 +434,9 @@ export default function App() {
         <button className="button button--secondary dashboard-reset" type="button" onClick={() => { void signOut(); }}>Sign out</button>
       </header>
       <div className={`dashboard dashboard--${mobileTab}`}>
-        {challengeState.testMode && <aside className="test-mode-banner">
-          <div className="test-mode-banner__copy"><strong>TEST MODE</strong><span>Dates are bypassed; prompts still unlock one day at a time.</span></div>
-          {participantId === 'sebastian' && <button className="button button--secondary test-mode-reset" type="button" disabled={isResetting} onClick={() => { void resetTestProgress(); }}>{isResetting ? 'Resetting…' : 'Reset both test sketchbooks'}</button>}
-        </aside>}
         <section className="dashboard-intro">
           <div className="profile-day"><span className="profile-day-avatar" aria-hidden="true"><span className="avatar-fallback">{participant.name[0]}</span><img src={participant.avatarPath} alt="" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.parentElement?.classList.add('has-avatar-fallback'); }}/></span><div><span className="profile-date">{participant.role}</span><h1>Day {selectedDay} <em>Hi {participant.name}</em></h1></div></div>
-          <div className="dashboard-brand"><img className="dashboard-mascot" src="/assets/illustrations/cover.png" alt="" /><div className="brand-wordmark-row"><img className="brand-decoration brand-decoration--left" src="/assets/illustrations/decoration-left.svg" alt="" /><span className="wordmark">Weirdmas</span><img className="brand-decoration brand-decoration--right" src="/assets/illustrations/decoration-right.svg" alt="" /></div><span className="brand-caption">DRAWING CHALLENGE</span></div>
+          <div className="dashboard-brand"><img className="dashboard-mascot" src="/assets/illustrations/cover.png" alt="" /><div className="brand-wordmark-row"><img className="brand-decoration brand-decoration--left" src="/assets/illustrations/decoration-left.svg" alt="" /><span className="wordmark">Weirdmas</span><img className="brand-decoration brand-decoration--right" src="/assets/illustrations/decoration-right.svg" alt="" /></div><span className="brand-caption">DAILY STORYBOOK</span></div>
         </section>
         {errorMessage && <p className="form-message form-message--error dashboard-message" role="alert">{errorMessage}</p>}
         {notice && <p className="form-message form-message--success dashboard-message" role="status">{notice}</p>}
@@ -450,13 +448,15 @@ export default function App() {
             <Gallery drawings={drawings} participants={participants} activeDay={selectedDay} sharedReveal={challengeState.sharedReveal} onOpen={() => selectMobileTab('sketchbook')}/>
           </div>
           <div className="dashboard-column dashboard-column--right">
-            <PromptCard day={selectedDay} participant={participant} promptTitle={promptTitle} unlocked={selectedDay === activeDay} uploaded={completedDays.includes(selectedDay)} onReveal={() => { void revealSelectedPrompt(); }} isRevealing={isRevealing}/>
-            <UploadCard onUpload={uploadDrawing} disabled={!canEditSelectedDay || isSaving || dashboardLoading} saving={isSaving} feedback={uploadFeedback}/>
+            <StoryEntryCard day={selectedDay} initialValue={storyEntry} disabled={!canEditStoryDay} saving={isSavingStory} onSave={(content) => { void saveDailyStory(content); }}/>
+            <UploadCard onUpload={uploadDrawing} disabled={!canUploadSelectedDay || isSaving || dashboardLoading} saving={isSaving} feedback={uploadFeedback}/>
+            <section className="glass-panel story-upload-card"><span className="eyebrow">THE FINISHED STORY</span><h2>Upload your written story</h2>{storySubmitted ? <p>Your story is uploaded to your private sketchbook.</p> : storyCountdown ? <><p>Available December 1</p><strong className="story-countdown" aria-live="off">{storyCountdown}</strong></> : <><p>Combine your daily pages, paste text or choose a text file, and add an optional cover.</p><button className="button button--primary" type="button" onClick={() => setShowStoryDialog(true)}>Prepare story upload</button></>}</section>
           </div>
         </div>
         <footer className="footer-note"><span>PRIVATE DRAWINGS · SHARED AFTER BOTH FINISH</span><span>6:00 am Bogotá time <i/> {participants.length} artists <i/> all kinds of weird</span></footer>
       </div>
-      <input ref={fileInput} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={!canEditSelectedDay || isSaving} onChange={(event) => { void handleFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }}/>
+      <input ref={fileInput} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={!canUploadSelectedDay || isSaving} onChange={(event) => { void handleFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }}/>
+      {showStoryDialog && <StorySubmissionDialog initialContent={storyEntries.slice().sort((a, b) => a.day - b.day).map((entry) => `Day ${entry.day}\n${entry.content}`).join('\n\n')} onClose={() => setShowStoryDialog(false)} onSubmitted={() => { setShowStoryDialog(false); setStorySubmitted(true); setNotice('Your story was uploaded.'); }}/ >}
     </main>
     <MobileBottomNav activeTab={mobileTab} onSelect={selectMobileTab} />
   </>;
