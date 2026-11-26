@@ -50,6 +50,8 @@ export default function App() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [storyEntries, setStoryEntries] = useState<StoryEntry[]>([]);
+  const [storyEntriesAvailable, setStoryEntriesAvailable] = useState(true);
+  const [storySubmissionAvailable, setStorySubmissionAvailable] = useState(true);
   const [isSavingStory, setIsSavingStory] = useState(false);
   const [showStoryDialog, setShowStoryDialog] = useState(false);
   const [storySubmitted, setStorySubmitted] = useState(false);
@@ -78,25 +80,38 @@ export default function App() {
         setChallengeState(null);
         setDrawings([]);
         setPromptAssignments([]);
+        setStoryEntries([]);
+        setStoryEntriesAvailable(true);
+        setStorySubmissionAvailable(true);
         setChallengeLoaded(true);
         return;
       }
 
-      const [nextDrawings, nextAssignments, nextStories, hasSubmittedStory] = await Promise.all([
+      const [nextDrawings, nextAssignments] = await Promise.all([
         loadDrawings(),
         loadPromptAssignments(),
-        loadStoryEntries(),
-        hasStorySubmission(),
       ]);
       setChallengeState(state);
       setParticipantId(state.participantId);
       setDrawings(nextDrawings);
       setPromptAssignments(nextAssignments);
-      setStoryEntries(nextStories);
-      setStorySubmitted(hasSubmittedStory);
       setSelectedDay((current) => state.activeDay ?? (state.completedDays.includes(current) ? current : state.completedDays.at(-1) ?? 1));
       setChallengeLoaded(true);
       setErrorMessage('');
+
+      const [storiesResult, submissionResult] = await Promise.allSettled([loadStoryEntries(), hasStorySubmission()]);
+      if (storiesResult.status === 'fulfilled') {
+        setStoryEntries(storiesResult.value);
+        setStoryEntriesAvailable(true);
+      } else {
+        setStoryEntriesAvailable(false);
+      }
+      if (submissionResult.status === 'fulfilled') {
+        setStorySubmitted(submissionResult.value);
+        setStorySubmissionAvailable(true);
+      } else {
+        setStorySubmissionAvailable(false);
+      }
     } finally {
       if (showLoading) setDashboardLoading(false);
     }
@@ -270,6 +285,8 @@ export default function App() {
     setPromptAssignments([]);
     setStoryEntries([]);
     setStorySubmitted(false);
+    setStoryEntriesAvailable(true);
+    setStorySubmissionAvailable(true);
     setSelectedDay(1);
     setShowBook(false);
     setMobileTab('today');
@@ -448,9 +465,9 @@ export default function App() {
             <Gallery drawings={drawings} participants={participants} activeDay={selectedDay} sharedReveal={challengeState.sharedReveal} onOpen={() => selectMobileTab('sketchbook')}/>
           </div>
           <div className="dashboard-column dashboard-column--right">
-            <StoryEntryCard day={selectedDay} initialValue={storyEntry} disabled={!canEditStoryDay} saving={isSavingStory} onSave={(content) => { void saveDailyStory(content); }}/>
+            <StoryEntryCard day={selectedDay} initialValue={storyEntry} available={storyEntriesAvailable} disabled={!storyEntriesAvailable || !canEditStoryDay} saving={isSavingStory} onSave={(content) => { void saveDailyStory(content); }}/>
             <UploadCard onUpload={uploadDrawing} disabled={!canUploadSelectedDay || isSaving || dashboardLoading} saving={isSaving} feedback={uploadFeedback}/>
-            <section className="glass-panel story-upload-card"><span className="eyebrow">THE FINISHED STORY</span><h2>Upload your written story</h2>{storySubmitted ? <p>Your story is uploaded to your private sketchbook.</p> : storyCountdown ? <><p>Available December 1</p><strong className="story-countdown" aria-live="off">{storyCountdown}</strong></> : <><p>Combine your daily pages, paste text or choose a text file, and add an optional cover.</p><button className="button button--primary" type="button" onClick={() => setShowStoryDialog(true)}>Prepare story upload</button></>}</section>
+            <section className="glass-panel story-upload-card"><span className="eyebrow">THE FINISHED STORY</span><h2>Upload your written story</h2>{!storySubmissionAvailable ? <p>Story uploads are temporarily unavailable. Your sketchbook is still ready to use.</p> : storySubmitted ? <p>Your story is uploaded to your private sketchbook.</p> : storyCountdown ? <><p>Available December 1</p><strong className="story-countdown" aria-live="off">{storyCountdown}</strong></> : <><p>Combine your daily pages, paste text or choose a text file, and add an optional cover.</p><button className="button button--primary" type="button" onClick={() => setShowStoryDialog(true)}>Prepare story upload</button></>}</section>
           </div>
         </div>
         <footer className="footer-note"><span>PRIVATE DRAWINGS · SHARED AFTER BOTH FINISH</span><span>6:00 am Bogotá time <i/> {participants.length} artists <i/> all kinds of weird</span></footer>
