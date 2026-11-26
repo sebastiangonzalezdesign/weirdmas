@@ -1,6 +1,133 @@
+import type { PDFFont } from 'pdf-lib';
+import { newStoryId, type StoryBlock, type StoryDocument, type StoryPage, type StoryBlockStyle } from './storyDocument';
+
 const pageWidth = 595.28;
 const pageHeight = 841.89;
 const margin = 52;
+const footerTop = 72;
+const bodyTop = pageHeight - margin;
+const fontSizeByStyle: Record<StoryBlockStyle, number> = { normal: 11.5, h1: 23, h2: 19, h3: 16, h4: 13.5 };
+
+type Font = PDFFont;
+type Fonts = { normal: Font; bold: Font; italic: Font; boldItalic: Font };
+
+function blockFont(block: StoryBlock, fonts: Fonts): Font {
+  const bold = block.bold || block.style !== 'normal';
+  if (bold && block.italic) return fonts.boldItalic;
+  if (bold) return fonts.bold;
+  if (block.italic) return fonts.italic;
+  return fonts.normal;
+}
+
+function pdfText(value: string): string {
+  return value.normalize('NFC').replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '?');
+}
+
+function wrapLine(value: string, font: Font, size: number, width: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const word of pdfText(value).split(/\s+/).filter(Boolean)) {
+    if (font.widthOfTextAtSize(word, size) > width) {
+      if (line) { lines.push(line); line = ''; }
+      let fragment = '';
+      for (const character of word) {
+        if (fragment && font.widthOfTextAtSize(fragment + character, size) > width) {
+          lines.push(fragment);
+          fragment = character;
+        } else fragment += character;
+      }
+      line = fragment;
+      continue;
+    }
+    const candidate = line ? `${line} ${word}` : word;
+    if (font.widthOfTextAtSize(candidate, size) <= width) line = candidate;
+    else { if (line) lines.push(line); line = word; }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [''];
+}
+
+function getLines(block: StoryBlock, fonts: Fonts): string[] {
+  return block.text.replace(/\r\n/g, '\n').split('\n').flatMap((paragraph) => wrapLine(
+    paragraph,
+    blockFont(block, fonts),
+    fontSizeByStyle[block.style],
+    pageWidth - margin * 2,
+  ));
+}
+
+function blockHeight(block: StoryBlock, lineCount: number): number {
+  return lineCount * fontSizeByStyle[block.style] * 1.35 + (block.style === 'normal' ? 8 : 10);
+}
+
+function splitBlock(block: StoryBlock, lines: string[], maxHeight: number): [StoryBlock, StoryBlock | null] {
+  const lineHeight = fontSizeByStyle[block.style] * 1.35;
+  const count = Math.max(1, Math.floor((maxHeight - 8) / lineHeight));
+  return [
+    { ...block, text: lines.slice(0, count).join('\n') },
+    lines.length > count ? { ...block, id: newStoryId(), text: lines.slice(count).join('\n') } : null,
+  ];
+}
+
+export async function paginateStoryDocument(document: StoryDocument): Promise<StoryDocument> {
+  const { PDFDocument, StandardFonts } = await import('pdf-lib');
+  const measuringDocument = await PDFDocument.create();
+  const fonts: Fonts = {
+    normal: await measuringDocument.embedFont(StandardFonts.Helvetica),
+    bold: await measuringDocument.embedFont(StandardFonts.HelveticaBold),
+    italic: await measuringDocument.embedFont(StandardFonts.HelveticaOblique),
+    boldItalic: await measuringDocument.embedFont(StandardFonts.HelveticaBoldOblique),
+  };
+
+  return document.map((chapter) => {
+    const pages: StoryPage[] = [];
+    let pageBlocks: StoryBlock[] = [];
+    let usedHeight = 0;
+    let isFirstChapterPage = true;
+    const flushPage = () => {
+      pages.push({ id: newStoryId(), blocks: pageBlocks, chapterTitle: isFirstChapterPage ? chapter.title.trim() : '' });
+      pageBlocks = [];
+      usedHeight = 0;
+      isFirstChapterPage = false;
+    };
+    const addBlock = (block: StoryBlock) => {
+      let pending: StoryBlock | null = block;
+      while (pending) {
+        const lines = getLines(pending, fonts);
+        const height = blockHeight(pending, lines.length);
+        const maxHeight = bodyTop - footerTop;
+        if (usedHeight + height <= maxHeight) {
+          pageBlocks.push(pending);
+          usedHeight += height;
+          pending = null;
+          continue;
+        }
+        const remaining = maxHeight - usedHeight;
+        if (pageBlocks.length > 0 && remaining > fontSizeByStyle[pending.style] * 1.35) {
+          const [fittingBlock, rest] = splitBlock(pending, lines, remaining);
+          pageBlocks.push(fittingBlock);
+          flushPage();
+          pending = rest;
+        } else if (pageBlocks.length > 0) {
+          flushPage();
+        } else {
+          const [fittingBlock, rest] = splitBlock(pending, lines, maxHeight - usedHeight);
+          pageBlocks.push(fittingBlock);
+          flushPage();
+          pending = rest;
+        }
+      }
+    };
+
+    chapter.pages.forEach((sourcePage, pageIndex) => {
+      if (pageIndex > 0 && pageBlocks.length > 0) flushPage();
+      if (isFirstChapterPage && chapter.title.trim()) usedHeight = fontSizeByStyle.h2 * 1.35 + 10;
+      sourcePage.blocks.forEach((block) => { if (block.text.trim()) addBlock(block); });
+    });
+    if (pageBlocks.length > 0 || pages.length === 0) flushPage();
+    return { ...chapter, pages };
+  });
+}
 
 async function coverJpeg(file: File): Promise<Uint8Array> {
   const url = URL.createObjectURL(file);
@@ -24,110 +151,64 @@ async function coverJpeg(file: File): Promise<Uint8Array> {
   }
 }
 
-function pdfText(value: string): string {
-  return value.normalize('NFC').replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '?');
-}
-
-function wrapLine(value: string, font: { widthOfTextAtSize: (text: string, size: number) => number }, size: number, width: number): string[] {
-  const words = pdfText(value).split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let line = '';
-  for (const word of words) {
-    if (font.widthOfTextAtSize(word, size) > width) {
-      if (line) { lines.push(line); line = ''; }
-      let fragment = '';
-      for (const character of word) {
-        if (fragment && font.widthOfTextAtSize(fragment + character, size) > width) {
-          lines.push(fragment);
-          fragment = character;
-        } else fragment += character;
-      }
-      line = fragment;
-      continue;
-    }
-    const candidate = line ? `${line} ${word}` : word;
-    if (font.widthOfTextAtSize(candidate, size) <= width) {
-      line = candidate;
-      continue;
-    }
-    if (line) lines.push(line);
-    line = word;
-  }
-  if (line) lines.push(line);
-  return lines.length ? lines : [''];
-}
-
-const bodySize = 11.5;
-const lineHeight = 16;
-const maxLinesPerPage = Math.floor((pageHeight - margin * 2 - 62) / lineHeight);
-
-export async function paginateStoryText(content: string): Promise<string[]> {
-  const { PDFDocument, StandardFonts } = await import('pdf-lib');
-  const measuringDocument = await PDFDocument.create();
-  const font = await measuringDocument.embedFont(StandardFonts.Helvetica);
-  const pages: string[] = [];
-  let lines: string[] = [];
-  const flushPage = () => {
-    if (lines.length) pages.push(lines.join('\n'));
-    lines = [];
-  };
-  const forcedSections = content.replace(/\r\n/g, '\n').split('\f');
-  forcedSections.forEach((section, sectionIndex) => {
-    if (sectionIndex > 0) flushPage();
-    const paragraphs = section.split('\n');
-    paragraphs.forEach((paragraph, paragraphIndex) => {
-      if (paragraphIndex > 0 && paragraph.length === 0) {
-        if (lines.length >= maxLinesPerPage) flushPage();
-        lines.push('');
-      } else if (paragraph.trim()) {
-        for (const line of wrapLine(paragraph, font, bodySize, pageWidth - margin * 2)) {
-          if (lines.length >= maxLinesPerPage) flushPage();
-          lines.push(line);
-        }
-      }
-    });
-  });
-  flushPage();
-  return pages.length ? pages : [''];
-}
-
-export async function createStoryPdf(pages: string[], cover?: File | null): Promise<Blob> {
-  if (!pages.some((page) => page.trim())) throw new Error('Add some story text before creating its PDF.');
+export async function createStoryPdf(document: StoryDocument, cover?: File | null): Promise<Blob> {
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
   const pdf = await PDFDocument.create();
-  pdf.setTitle('Weirdmas — The Story');
+  pdf.setTitle('Weirdmas Story');
   pdf.setSubject('Weirdmas December story');
-  const regular = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-
-  const totalPages = pages.length + (cover ? 1 : 0);
+  const fonts: Fonts = {
+    normal: await pdf.embedFont(StandardFonts.Helvetica),
+    bold: await pdf.embedFont(StandardFonts.HelveticaBold),
+    italic: await pdf.embedFont(StandardFonts.HelveticaOblique),
+    boldItalic: await pdf.embedFont(StandardFonts.HelveticaBoldOblique),
+  };
   let pageNumber = 0;
+  const drawPageNumber = (page: ReturnType<typeof pdf.addPage>) => {
+    page.drawText(String(pageNumber).padStart(2, '0'), {
+      x: pageWidth - margin - 18,
+      y: 43,
+      size: 9,
+      font: fonts.normal,
+      color: rgb(0.31, 0.37, 0.42),
+    });
+  };
+
   if (cover) {
     const image = await pdf.embedJpg(await coverJpeg(cover));
     const page = pdf.addPage([pageWidth, pageHeight]);
-    page.drawText('WEIRDMAS', { x: margin, y: pageHeight - 70, size: 26, font: bold, color: rgb(0.043, 0.09, 0.129) });
-    const frame = { x: margin, y: 120, width: pageWidth - margin * 2, height: pageHeight - 240 };
+    const frame = { x: margin, y: margin, width: pageWidth - margin * 2, height: pageHeight - margin * 2 };
     const scale = Math.min(frame.width / image.width, frame.height / image.height);
     const width = image.width * scale;
     const height = image.height * scale;
     page.drawImage(image, { x: frame.x + (frame.width - width) / 2, y: frame.y + (frame.height - height) / 2, width, height });
     pageNumber += 1;
-    page.drawText(`COVER  ·  ${String(pageNumber).padStart(2, '0')} / ${String(totalPages).padStart(2, '0')}`, { x: margin, y: 48, size: 9, font: regular, color: rgb(0.31, 0.37, 0.42) });
+    drawPageNumber(page);
   }
 
-  pages.forEach((pageContent, index) => {
-    const page = pdf.addPage([pageWidth, pageHeight]);
-    pageNumber += 1;
-    page.drawText('WEIRDMAS', { x: margin, y: pageHeight - margin, size: 10, font: bold, color: rgb(0.043, 0.09, 0.129) });
-    page.drawText(index === 0 ? 'THE STORY' : 'THE STORY · CONTINUED', { x: margin, y: pageHeight - margin - 18, size: 9, font: regular, color: rgb(0.31, 0.37, 0.42) });
-    page.drawLine({ start: { x: margin, y: pageHeight - margin - 27 }, end: { x: pageWidth - margin, y: pageHeight - margin - 27 }, thickness: 1, color: rgb(0.85, 0.87, 0.88) });
-    const firstBaseline = pageHeight - margin - 44;
-    pageContent.split('\n').forEach((line, lineIndex) => {
-      if (line) page.drawText(pdfText(line), { x: margin, y: firstBaseline - lineIndex * lineHeight, size: bodySize, font: regular, color: rgb(0.12, 0.16, 0.19) });
-    });
-    page.drawLine({ start: { x: margin, y: 64 }, end: { x: pageWidth - margin, y: 64 }, thickness: 1, color: rgb(0.85, 0.87, 0.88) });
-    page.drawText(`PAGE ${String(pageNumber).padStart(2, '0')} / ${String(totalPages).padStart(2, '0')}`, { x: margin, y: 44, size: 9, font: regular, color: rgb(0.31, 0.37, 0.42) });
-  });
+  for (const chapter of document) {
+    for (const storyPage of chapter.pages) {
+      const page = pdf.addPage([pageWidth, pageHeight]);
+      let y = bodyTop;
+      if (storyPage.chapterTitle?.trim()) {
+        const titleSize = fontSizeByStyle.h2;
+        page.drawText(pdfText(storyPage.chapterTitle.trim()), { x: margin, y, size: titleSize, font: fonts.bold, color: rgb(0.043, 0.09, 0.129) });
+        y -= titleSize * 1.35 + 10;
+      }
+      for (const block of storyPage.blocks) {
+        const size = fontSizeByStyle[block.style];
+        const lines = getLines(block, fonts);
+        const font = blockFont(block, fonts);
+        for (const line of lines) {
+          page.drawText(pdfText(line), { x: margin, y, size, font, color: rgb(0.12, 0.16, 0.19) });
+          y -= size * 1.35;
+        }
+        y -= block.style === 'normal' ? 8 : 10;
+      }
+      pageNumber += 1;
+      drawPageNumber(page);
+    }
+  }
+
   const bytes = await pdf.save();
   return new Blob([bytes], { type: 'application/pdf' });
 }

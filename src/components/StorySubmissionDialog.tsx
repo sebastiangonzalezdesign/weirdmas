@@ -1,204 +1,59 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { submitStory } from '../lib/supabaseApi';
-import { paginateStoryText, createStoryPdf } from '../lib/storyPdf';
+import { createStoryPdf, paginateStoryDocument } from '../lib/storyPdf';
+import { newStoryBlock, newStoryChapter, newStoryPage, parseStoryDocument, serializeStoryDocument, type StoryBlockStyle, type StoryChapter, type StoryDocument } from '../lib/storyDocument';
 
 interface Props { initialContent: string; initialCover?: File | null; onClose: () => void; onSubmitted: (content: string, cover: File | null) => void; }
 type ViewMode = 'write' | 'preview';
-
-function serializePages(pages: string[]): string {
-  return pages.join('\f');
-}
-
-function downloadPdf(file: Blob): void {
-  const url = URL.createObjectURL(file);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'weirdmas-story.pdf';
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
+const styleNames: Record<StoryBlockStyle, string> = { normal: 'Normal', h1: 'Heading 1', h2: 'Heading 2', h3: 'Heading 3', h4: 'Heading 4' };
+function downloadPdf(file: Blob): void { const url = URL.createObjectURL(file); const link = document.createElement('a'); link.href = url; link.download = 'weirdmas-story.pdf'; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 60_000); }
 
 export function StorySubmissionDialog({ initialContent, initialCover = null, onClose, onSubmitted }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const initialContentRef = useRef(initialContent);
-  const [pages, setPages] = useState<string[]>(['']);
+  const [chapters, setChapters] = useState<StoryDocument>([newStoryChapter()]);
   const [cover, setCover] = useState<File | null>(initialCover);
   const [mode, setMode] = useState<ViewMode>('write');
-  const [busy, setBusy] = useState(false);
-  const [pdfBusy, setPdfBusy] = useState(false);
-  const [layoutBusy, setLayoutBusy] = useState(true);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false); const [pdfBusy, setPdfBusy] = useState(false); const [layoutBusy, setLayoutBusy] = useState(true);
+  const [saved, setSaved] = useState(false); const [error, setError] = useState('');
   const coverUrl = useMemo(() => cover ? URL.createObjectURL(cover) : '', [cover]);
-
-  useEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-    let active = true;
-    void paginateStoryText(initialContentRef.current).then((nextPages) => {
-      if (active) setPages(nextPages);
-    }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : 'The story pages could not be prepared.');
-    }).finally(() => { if (active) setLayoutBusy(false); });
-    return () => {
-      active = false;
-      if (dialog?.open) dialog.close();
-    };
-  }, []);
-
+  useEffect(() => { const dialog = ref.current; if (dialog && !dialog.open) dialog.showModal(); let active = true; void paginateStoryDocument(parseStoryDocument(initialContentRef.current)).then((value) => { if (active) setChapters(value); }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'The story pages could not be prepared.'); }).finally(() => { if (active) setLayoutBusy(false); }); return () => { active = false; if (dialog?.open) dialog.close(); }; }, []);
   useEffect(() => () => { if (coverUrl) URL.revokeObjectURL(coverUrl); }, [coverUrl]);
+  const update = (fn: (current: StoryDocument) => StoryDocument) => { setChapters(fn); setSaved(false); };
+  const editPage = (chapterId: string, pageId: string, fn: (page: StoryChapter['pages'][number]) => StoryChapter['pages'][number]) => update((cs) => cs.map((c) => c.id === chapterId ? { ...c, pages: c.pages.map((p) => p.id === pageId ? fn(p) : p) } : c));
+  const importFile = async (file?: File) => { if (!file) return; setLayoutBusy(true); setError(''); try { const { readStoryFile } = await import('../lib/storyImport'); const imported = await readStoryFile(file); setChapters(await paginateStoryDocument(imported)); setMode('write'); setSaved(false); } catch (reason) { setError(reason instanceof Error ? reason.message : 'That story file could not be read.'); } finally { setLayoutBusy(false); } };
+  const preparePreview = async () => { setLayoutBusy(true); setError(''); try { setChapters(await paginateStoryDocument(chapters)); setMode('preview'); } catch (reason) { setError(reason instanceof Error ? reason.message : 'The story preview could not be prepared.'); } finally { setLayoutBusy(false); } };
+  const saveDraft = async () => { const content = serializeStoryDocument(chapters); if (!chapters.some((c) => c.pages.some((p) => p.blocks.some((b) => b.text.trim())))) return; setBusy(true); setError(''); try { await submitStory(content, cover ?? undefined); setSaved(true); onSubmitted(content, cover); } catch (reason) { setError(reason instanceof Error ? reason.message : 'The story draft could not be saved.'); } finally { setBusy(false); } };
+  const createPdf = async () => { setPdfBusy(true); setError(''); try { const laidOut = await paginateStoryDocument(chapters); setChapters(laidOut); downloadPdf(await createStoryPdf(laidOut, cover)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'The story PDF could not be created.'); } finally { setPdfBusy(false); } };
+  const movePage = (chapterId: string, pageId: string, direction: -1 | 1) => update((cs) => cs.map((c) => { if (c.id !== chapterId) return c; const i = c.pages.findIndex((p) => p.id === pageId); const j = i + direction; if (i < 0 || j < 0 || j >= c.pages.length) return c; const pages = [...c.pages]; [pages[i], pages[j]] = [pages[j], pages[i]]; return { ...c, pages }; }));
+  const moveChapter = (chapterId: string, direction: -1 | 1) => update((cs) => { const i = cs.findIndex((c) => c.id === chapterId); const j = i + direction; if (i < 0 || j < 0 || j >= cs.length) return cs; const result = [...cs]; [result[i], result[j]] = [result[j], result[i]]; return result; });
+  const totalPages = chapters.reduce((n, c) => n + c.pages.length, cover ? 1 : 0);
+  let printedPage = 0;
+  const moveToChapter = (fromId: string, pageId: string, toId: string) => update((cs) => { let page: StoryChapter['pages'][number] | undefined; const removed = cs.map((c) => { if (c.id !== fromId) return c; page = c.pages.find((p) => p.id === pageId); const pages = c.pages.filter((p) => p.id !== pageId); return { ...c, pages: pages.length ? pages : [newStoryPage()] }; }); return removed.map((c) => c.id === toId && page ? { ...c, pages: [...c.pages, page] } : c); });
 
-  const replacePage = (index: number, value: string) => {
-    setPages((current) => current.map((page, pageIndex) => pageIndex === index ? value : page));
-    setSaved(false);
-  };
-
-  const importFile = async (file?: File) => {
-    if (!file) return;
-    setLayoutBusy(true);
-    setError('');
-    try {
-      let text: string;
-      if (/\.docx$/i.test(file.name) || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-        const { readStoryFile } = await import('../lib/storyImport');
-        text = await readStoryFile(file);
-      } else {
-        if (!/\.(txt|md)$/i.test(file.name) || file.size > 2 * 1024 * 1024) throw new Error('Choose a .txt, .md, or .docx file. Text files must be 2 MB or smaller.');
-        text = await file.text();
-      }
-      const nextPages = await paginateStoryText(text);
-      setPages(nextPages);
-      setMode('write');
-      setSaved(false);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'That story file could not be read.');
-    } finally {
-      setLayoutBusy(false);
-    }
-  };
-
-  const reflowPage = async (index: number) => {
-    setLayoutBusy(true);
-    setError('');
-    try {
-      const replacement = await paginateStoryText(pages[index] ?? '');
-      setPages((current) => [...current.slice(0, index), ...replacement, ...current.slice(index + 1)]);
-      setSaved(false);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'This page could not be laid out.');
-    } finally { setLayoutBusy(false); }
-  };
-
-  const preparePreview = async () => {
-    setLayoutBusy(true);
-    setError('');
-    try {
-      setPages(await paginateStoryText(serializePages(pages)));
-      setMode('preview');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The story preview could not be prepared.');
-    } finally { setLayoutBusy(false); }
-  };
-
-  const saveDraft = async () => {
-    const content = serializePages(pages).trim();
-    if (!content) return;
-    setBusy(true);
-    setError('');
-    try {
-      await submitStory(content, cover ?? undefined);
-      setSaved(true);
-      onSubmitted(content, cover);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The story draft could not be saved.');
-    } finally { setBusy(false); }
-  };
-
-  const createPdf = async () => {
-    setPdfBusy(true);
-    setError('');
-    try {
-      const laidOutPages = await paginateStoryText(serializePages(pages));
-      setPages(laidOutPages);
-      downloadPdf(await createStoryPdf(laidOutPages, cover));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The story PDF could not be created.');
-    } finally { setPdfBusy(false); }
-  };
-
-  const movePage = (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= pages.length) return;
-    setPages((current) => {
-      const result = [...current];
-      [result[index], result[target]] = [result[target], result[index]];
-      return result;
-    });
-    setSaved(false);
-  };
-
-  const deletePage = (index: number) => {
-    setPages((current) => current.length === 1 ? [''] : current.filter((_, pageIndex) => pageIndex !== index));
-    setSaved(false);
-  };
-
-  const addPage = () => {
-    setPages((current) => [...current, '']);
-    setMode('write');
-    setSaved(false);
-  };
-
-  const pageCount = pages.length + (cover ? 1 : 0);
-  let printedPage = cover ? 1 : 0;
-
-  return <dialog ref={ref} className="sketchbook-export-dialog story-dialog" aria-labelledby="story-submit-title" onCancel={(event) => { event.preventDefault(); if (!busy && !pdfBusy && !layoutBusy) onClose(); }} onClick={(event) => { if (event.target === event.currentTarget && !busy && !pdfBusy && !layoutBusy) onClose(); }}>
+  return <dialog ref={ref} className="sketchbook-export-dialog story-dialog" aria-labelledby="story-submit-title" onCancel={(e) => { e.preventDefault(); if (!busy && !pdfBusy && !layoutBusy) onClose(); }} onClick={(e) => { if (e.target === e.currentTarget && !busy && !pdfBusy && !layoutBusy) onClose(); }}>
     <div className="sketchbook-export-dialog__inner">
       <div className="sketchbook-export-dialog__header"><div><span className="eyebrow">YOUR STORY DRAFT</span><h2 id="story-submit-title">Edit pages and make a PDF</h2></div><button className="sketchbook-export-dialog__close" type="button" onClick={onClose} disabled={busy || pdfBusy || layoutBusy} aria-label="Close">×</button></div>
-      <p className="sketchbook-export-dialog__description">Import a text or Word file, edit and reorder pages, then preview the PDF. Word and Google Docs explicit page breaks are kept when available; automatic page flow is rebuilt to fit this PDF. Export Google Docs as .docx first.</p>
-
-      <div className="story-editor-toolbar">
-        <label className="story-file-label">Import .txt, .md, or .docx<input type="file" accept=".txt,.md,text/plain,text/markdown,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => { void importFile(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }} /></label>
-        <label className="story-file-label">Optional cover image<input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { setCover(event.currentTarget.files?.[0] ?? null); setSaved(false); }} /></label>
-        {cover && <div className="story-cover-selection"><small className="story-cover-name">{cover.name}</small><button className="text-button" type="button" onClick={() => { setCover(null); setSaved(false); }}>Remove cover</button></div>}
-      </div>
-
-      <div className="story-view-tabs" role="tablist" aria-label="Story view">
-        <button type="button" role="tab" aria-selected={mode === 'write'} onClick={() => setMode('write')}>Edit pages</button>
-        <button type="button" role="tab" aria-selected={mode === 'preview'} disabled={layoutBusy} onClick={() => { void preparePreview(); }}>Preview PDF</button>
-        <span>{pageCount} {pageCount === 1 ? 'page' : 'pages'}</span>
-      </div>
-
+      <p className="sketchbook-export-dialog__description">Import a text or Word file, preview and organize pages into chapters, then download your story. Word and Google Docs explicit page breaks are kept when available; automatic page flow is rebuilt to fit this PDF. Export Google Docs as .docx first.</p>
+      <div className="story-editor-toolbar"><label className="story-file-label">Import .txt, .md, or .docx<input type="file" accept=".txt,.md,text/plain,text/markdown,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(e) => { void importFile(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} /></label><label className="story-file-label">Optional cover image<input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => { setCover(e.currentTarget.files?.[0] ?? null); setSaved(false); }} /></label>{cover && <div className="story-cover-selection"><small className="story-cover-name">{cover.name}</small><button className="text-button" type="button" onClick={() => { setCover(null); setSaved(false); }}>Remove cover</button></div>}</div>
+      <div className="story-view-tabs" role="tablist" aria-label="Story view"><button type="button" role="tab" aria-selected={mode === 'write'} onClick={() => setMode('write')}>Edit pages</button><button type="button" role="tab" aria-selected={mode === 'preview'} disabled={layoutBusy} onClick={() => { void preparePreview(); }}>Preview PDF</button><span>{totalPages} {totalPages === 1 ? 'page' : 'pages'}</span></div>
       {layoutBusy && <p className="sketchbook-export-status" role="status">Preparing pages…</p>}
       {!layoutBusy && mode === 'write' && <div className="story-page-list">
-        {pages.map((page, index) => <section className="story-page-edit" key={index}>
-          <div className="story-page-edit__header"><strong>Page {index + 1}</strong><div className="story-page-controls">
-            <button type="button" onClick={() => movePage(index, -1)} disabled={index === 0} aria-label={`Move page ${index + 1} up`}>↑</button>
-            <button type="button" onClick={() => movePage(index, 1)} disabled={index === pages.length - 1} aria-label={`Move page ${index + 1} down`}>↓</button>
-            <button type="button" onClick={() => { void reflowPage(index); }} disabled={layoutBusy}>Split to fit</button>
-            <button type="button" onClick={() => deletePage(index)} aria-label={`Delete page ${index + 1}`}>Delete</button>
-          </div></div>
-          <textarea className="story-submit-text" aria-label={`Edit story page ${index + 1}`} value={page} onChange={(event) => replacePage(index, event.target.value)} placeholder="Write this page…" maxLength={100000} />
+        {chapters.map((chapter, ci) => <section className="story-chapter-edit" key={chapter.id}><div className="story-chapter-heading"><label className="story-chapter-title">Chapter title<input value={chapter.title} placeholder={`Chapter ${ci + 1}`} onChange={(e) => update((cs) => cs.map((c) => c.id === chapter.id ? { ...c, title: e.target.value } : c))} /></label><div className="story-page-controls"><button type="button" onClick={() => moveChapter(chapter.id, -1)} disabled={ci === 0} aria-label="Move chapter up">↑</button><button type="button" onClick={() => moveChapter(chapter.id, 1)} disabled={ci === chapters.length - 1} aria-label="Move chapter down">↓</button><button className="text-button" type="button" disabled={chapters.length === 1} onClick={() => update((cs) => cs.filter((c) => c.id !== chapter.id))}>Delete chapter</button></div></div>
+          {chapter.pages.map((page, pi) => <section className="story-page-edit" key={page.id}><div className="story-page-edit__header"><strong>Page {pi + 1}</strong><div className="story-page-controls"><button type="button" onClick={() => movePage(chapter.id, page.id, -1)} disabled={pi === 0} aria-label="Move page up">↑</button><button type="button" onClick={() => movePage(chapter.id, page.id, 1)} disabled={pi === chapter.pages.length - 1} aria-label="Move page down">↓</button><select aria-label="Move page to chapter" value={chapter.id} onChange={(e) => moveToChapter(chapter.id, page.id, e.target.value)}>{chapters.map((c, index) => <option key={c.id} value={c.id}>{c.title || `Chapter ${index + 1}`}</option>)}</select></div></div>
+            {page.blocks.map((block) => <div className="story-block-edit" key={block.id}><div className="story-block-toolbar"><select aria-label="Text style" value={block.style} onChange={(e) => editPage(chapter.id, page.id, (p) => ({ ...p, blocks: p.blocks.map((b) => b.id === block.id ? { ...b, style: e.target.value as StoryBlockStyle } : b) }))}>{Object.entries(styleNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><button type="button" aria-pressed={block.bold} onClick={() => editPage(chapter.id, page.id, (p) => ({ ...p, blocks: p.blocks.map((b) => b.id === block.id ? { ...b, bold: !b.bold } : b) }))}><b>B</b></button><button type="button" aria-pressed={block.italic} onClick={() => editPage(chapter.id, page.id, (p) => ({ ...p, blocks: p.blocks.map((b) => b.id === block.id ? { ...b, italic: !b.italic } : b) }))}><i>I</i></button><button type="button" aria-label="Remove text block" disabled={page.blocks.length === 1} onClick={() => editPage(chapter.id, page.id, (p) => ({ ...p, blocks: p.blocks.filter((b) => b.id !== block.id) }))}>×</button></div><textarea className={`story-submit-text story-text--${block.style}`} aria-label={`${styleNames[block.style]} text`} value={block.text} onChange={(e) => editPage(chapter.id, page.id, (p) => ({ ...p, blocks: p.blocks.map((b) => b.id === block.id ? { ...b, text: e.target.value } : b) }))} placeholder="Write this text…" maxLength={100000} /></div>)}
+            <button className="text-button" type="button" disabled={chapter.pages.length === 1} onClick={() => update((cs) => cs.map((c) => c.id === chapter.id ? { ...c, pages: c.pages.length === 1 ? [newStoryPage()] : c.pages.filter((p) => p.id !== page.id) } : c))}>Delete page</button><button className="text-button" type="button" onClick={() => editPage(chapter.id, page.id, (p) => ({ ...p, blocks: [...p.blocks, newStoryBlock()] }))}>Add text block</button>
+          </section>)}
+          <button className="button button--secondary story-add-page" type="button" onClick={() => update((cs) => cs.map((c) => c.id === chapter.id ? { ...c, pages: [...c.pages, newStoryPage()] } : c))}>Add page to chapter</button>
         </section>)}
-        <button className="button button--secondary story-add-page" type="button" onClick={addPage}>Add page</button>
+        <button className="button button--secondary story-add-page" type="button" onClick={() => update((cs) => [...cs, newStoryChapter(`Chapter ${cs.length + 1}`)])}>Add chapter</button>
       </div>}
-
       {!layoutBusy && mode === 'preview' && <div className="story-preview-list">
-        {coverUrl && <article className="story-paper story-paper--cover"><strong>WEIRDMAS</strong><img src={coverUrl} alt="Story cover preview" /><span>COVER · 01 / {String(pageCount).padStart(2, '0')}</span></article>}
-        {pages.map((page, index) => {
-          printedPage += 1;
-          return <article className="story-paper" key={index}>
-            <header><strong>WEIRDMAS</strong><span>{index === 0 ? 'THE STORY' : 'THE STORY · CONTINUED'}</span></header>
-            <div className="story-paper__body">{page.split('\n').map((line, lineIndex) => <div key={lineIndex}>{line || <br />}</div>)}</div>
-            <footer>PAGE {String(printedPage).padStart(2, '0')} / {String(pageCount).padStart(2, '0')}</footer>
-            <div className="story-paper__controls"><button type="button" onClick={() => movePage(index, -1)} disabled={index === 0} aria-label={`Move page ${index + 1} up`}>Move up</button><button type="button" onClick={() => movePage(index, 1)} disabled={index === pages.length - 1} aria-label={`Move page ${index + 1} down`}>Move down</button><button type="button" onClick={() => { setMode('write'); }}>Edit page</button></div>
-          </article>;
-        })}
-        <button className="button button--secondary story-add-page" type="button" onClick={addPage}>Add page</button>
+        {coverUrl && <article className="story-paper story-paper--cover"><img src={coverUrl} alt="Story cover preview" /><footer>{String(++printedPage).padStart(2, '0')}</footer></article>}
+        {chapters.map((chapter) => chapter.pages.map((page) => { printedPage += 1; return <article className="story-paper" key={page.id}><div className="story-paper__body">{page.chapterTitle?.trim() && <h2>{page.chapterTitle}</h2>}{page.blocks.map((block) => { const Tag = block.style === 'normal' ? 'p' : block.style; return <Tag key={block.id} className={`${block.bold ? 'is-bold ' : ''}${block.italic ? 'is-italic' : ''}`}>{block.text}</Tag>; })}</div><footer>{String(printedPage).padStart(2, '0')}</footer><div className="story-paper__controls"><button type="button" onClick={() => { setMode('write'); }}>Edit page</button></div></article>; }))}
       </div>}
-
-      {saved && <p className="sketchbook-export-status" role="status">Story draft saved. You can replace it any time.</p>}
-      {error && <p className="sketchbook-export-error" role="alert">{error}</p>}
-      <div className="sketchbook-export-actions"><button className="button button--primary" type="button" disabled={busy || layoutBusy || !pages.some((page) => page.trim())} onClick={() => { void saveDraft(); }}>{busy ? 'Saving…' : 'Save story draft'}</button><button className="button button--secondary" type="button" disabled={pdfBusy || layoutBusy || !pages.some((page) => page.trim())} onClick={() => { void createPdf(); }}>{pdfBusy ? 'Creating PDF…' : 'Download story PDF'}</button><button className="text-button" type="button" disabled={busy || pdfBusy || layoutBusy} onClick={onClose}>Close</button></div>
+      {saved && <p className="sketchbook-export-status" role="status">Story draft saved. You can replace it any time.</p>}{error && <p className="sketchbook-export-error" role="alert">{error}</p>}
+      <div className="sketchbook-export-actions"><button className="button button--primary" type="button" disabled={busy || layoutBusy || !chapters.some((c) => c.pages.some((p) => p.blocks.some((b) => b.text.trim())))} onClick={() => { void saveDraft(); }}>{busy ? 'Saving…' : 'Save story draft'}</button><button className="button button--secondary" type="button" disabled={pdfBusy || layoutBusy || !chapters.some((c) => c.pages.some((p) => p.blocks.some((b) => b.text.trim())))} onClick={() => { void createPdf(); }}>{pdfBusy ? 'Creating PDF…' : 'Download story PDF'}</button><button className="text-button" type="button" disabled={busy || pdfBusy || layoutBusy} onClick={onClose}>Close</button></div>
     </div>
   </dialog>;
 }
