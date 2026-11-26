@@ -115,6 +115,47 @@ export function newStoryChapter(title = ''): StoryChapter {
   return { id: newStoryId(), title, pages: [newStoryPage()] };
 }
 
+export function groupStoryPagesByChapter(pages: StoryPage[]): StoryDocument {
+  const chapters: StoryDocument = [];
+  let chapter = newStoryChapter('');
+  chapter.pages = [];
+  let pageBlocks: StoryBlock[] = [];
+  let chapterHasContent = false;
+  const flushPage = () => {
+    if (!pageBlocks.length) return;
+    chapter.pages.push({ id: newStoryId(), blocks: pageBlocks });
+    pageBlocks = [];
+  };
+  const flushChapter = () => {
+    flushPage();
+    if (chapterHasContent || chapter.pages.length) chapters.push(chapter);
+    chapter = newStoryChapter('');
+    chapter.pages = [];
+    chapterHasContent = false;
+  };
+  for (const page of pages) {
+    for (const block of page.blocks) {
+      const heading = block.text.trim().match(/^#{0,6}\s*(chapter\b[^\n]*)$/i);
+      if (heading?.[1]) {
+        flushChapter();
+        chapter.title = heading[1].replace(/^#+\s*/, '').trim();
+        chapterHasContent = true;
+      } else {
+        pageBlocks.push(block);
+        if (block.text.trim()) chapterHasContent = true;
+      }
+    }
+    flushPage();
+  }
+  flushChapter();
+  if (!chapters.length) {
+    const fallback = newStoryChapter('');
+    fallback.pages = pages.length ? pages : [newStoryPage()];
+    return [fallback];
+  }
+  return chapters;
+}
+
 export function serializeStoryDocument(document: StoryDocument): string {
   return `${documentMarker}${JSON.stringify({ version: 2, chapters: document })}`;
 }
@@ -158,10 +199,13 @@ export function parseStoryDocument(value: string): StoryDocument {
   }
 
   const sections = value.replace(/\r\n/g, '\n').split('\f');
-  const chapter = newStoryChapter('');
-  chapter.pages = sections.map((section) => {
+  const pages = sections.map((section) => {
     const paragraphs = section.split(/\n\s*\n/).filter((paragraph) => paragraph.trim());
-    return { id: newStoryId(), blocks: paragraphs.length ? paragraphs.map((paragraph) => newStoryBlock(paragraph.trim())) : [newStoryBlock()] };
+    const blocks = paragraphs.map((paragraph) => {
+      const heading = paragraph.trim().match(/^(#{1,4})\s+([\s\S]+)$/);
+      return newStoryBlock(heading?.[2] ?? paragraph.trim(), heading ? `h${heading[1]?.length}` as StoryBlockStyle : 'normal');
+    });
+    return { id: newStoryId(), blocks: blocks.length ? blocks : [newStoryBlock()] };
   });
-  return [chapter];
+  return groupStoryPagesByChapter(pages);
 }

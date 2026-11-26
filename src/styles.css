@@ -296,6 +296,14 @@
 .story-block-toolbar button{min-width:34px;min-height:34px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(255,255,255,.06);color:#f6f8fa;font:inherit;cursor:pointer}
 .story-block-toolbar button[aria-pressed=true]{background:#d8e4ec;color:#172630}
 .story-block-toolbar button:disabled{opacity:.4;cursor:not-allowed}
+.story-move-page{display:flex;align-items:center;gap:5px;color:#9eacb9;font-size:10px;font-weight:700}
+.story-unsaved-backdrop{position:absolute;inset:0;z-index:5;display:grid;place-items:center;padding:20px;background:rgba(3,10,16,.82);backdrop-filter:blur(5px)}
+.story-unsaved-dialog{width:min(100%,390px);padding:22px;border:1px solid rgba(223,235,244,.2);border-radius:18px;background:#142533;box-shadow:0 22px 70px rgba(0,0,0,.55)}
+.story-unsaved-dialog h3{margin:0;color:#fff;font-size:20px}
+.story-unsaved-dialog p{margin:9px 0 18px;color:#aab7c3;font-size:13px;line-height:1.5}
+.story-unsaved-dialog>div{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.story-unsaved-dialog .text-button{padding:9px 11px}
+.story-unsaved-dialog .button{padding:11px 13px}
 .story-submit-text.story-text--h1{font-size:28px;font-weight:800}
 .story-submit-text.story-text--h2{font-size:24px;font-weight:800}
 .story-submit-text.story-text--h3{font-size:20px;font-weight:700}
